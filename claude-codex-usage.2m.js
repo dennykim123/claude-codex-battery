@@ -482,20 +482,20 @@ const out = [];
 //   Claude(usage-cache): C5=5시간세션 · CW=주간전체 · CF=Fable 주간
 //   Codex(rate_limits) : X5=5시간 · XW=주간
 const rem = (pct) => (pct == null ? null : Math.max(0, 100 - pct));
+// 한쪽만 쓰는 사용자 대응: 데이터가 있는 서비스만 표시
+const hasClaude = !!cusage || !!(claude && !claude.error);
+const hasCodex = !!codex;
 const battItems = [];
+// Claude — usage-cache 있으면 3종, 없어도 ccusage 블록이 있으면 C5만. 둘 다 없으면 Claude 배터리 생략.
 if (cusage) {
   battItems.push({ label: "C5", remain: rem(cusage.fiveHour?.pct) });
   battItems.push({ label: "CW", remain: rem(cusage.weekly?.pct) });
   if (cusage.fable)
     battItems.push({ label: "CF", remain: rem(cusage.fable.pct) });
-} else {
-  // fallback: usage-cache 없으면 ccusage 블록 시간경과
-  battItems.push({
-    label: "C5",
-    remain:
-      claude && !claude.error ? Math.max(0, 100 - claude.elapsedPct) : null,
-  });
+} else if (claude && !claude.error) {
+  battItems.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct) });
 }
+// Codex — 세션 데이터 있을 때만. Codex 안 쓰는 사람에겐 X 배터리 자체를 안 그림.
 if (codex && (codex.primary || codex.secondary)) {
   // prolite: 5시간·주간 % 창
   const p = windowState(codex.primary);
@@ -511,72 +511,79 @@ if (codex && (codex.primary || codex.secondary)) {
       ? 100
       : 0;
   battItems.push({ label: "X", remain });
-} else {
-  battItems.push({ label: "X", remain: null });
 }
 // 잔량 숫자가 캡슐 안에 들어감 → 메뉴바는 이미지만. 라벨은 드롭다운 범례.
-const battImg = renderBatteryImage(isDarkMode(), battItems);
-out.push(`| image=${battImg}`);
+// 둘 다 없으면(신규/양쪽 미사용) 배터리 대신 안내 아이콘.
+if (battItems.length) {
+  out.push(`| image=${renderBatteryImage(isDarkMode(), battItems)}`);
+} else {
+  out.push("🔋 —");
+}
 out.push("---");
 const codexLegend =
   codex?.credits && !codex.primary && !codex.secondary
     ? "X = Codex 크레딧"
     : "X5·XW = Codex 5시간·주간";
-out.push(
-  `🔋 남은 %  ·  C5·CW·CF = Claude 5시간·주간·Fable  ·  ${codexLegend} | size=11 color=#8b949e`,
-);
-out.push("---");
+const legendParts = [];
+if (hasClaude) legendParts.push("C5·CW·CF = Claude 5시간·주간·Fable");
+if (hasCodex) legendParts.push(codexLegend);
+if (legendParts.length) {
+  out.push(
+    `🔋 남은 %  ·  ${legendParts.join("  ·  ")} | size=11 color=#8b949e`,
+  );
+  out.push("---");
+}
 
-// Claude 상세 — 실제 한도(usage-cache) 3종 + 블록 비용(ccusage)
-out.push("Claude Code | size=13 color=#8b949e");
-if (cusage) {
-  const winRow = (label, w) => {
-    if (!w) return;
-    const r = Math.max(0, 100 - (w.pct ?? 0));
-    const reset = w.resetsAt
-      ? w.resetsAt < now
-        ? "리셋됨"
-        : `리셋 ${fmtDur(w.resetsAt - now)}`
-      : "";
+// Claude 상세 — hasClaude일 때만 (Claude Code 안 쓰면 섹션 자체 생략)
+if (hasClaude) {
+  out.push("Claude Code | size=13 color=#8b949e");
+  if (cusage) {
+    const winRow = (label, w) => {
+      if (!w) return;
+      const r = Math.max(0, 100 - (w.pct ?? 0));
+      const reset = w.resetsAt
+        ? w.resetsAt < now
+          ? "리셋됨"
+          : `리셋 ${fmtDur(w.resetsAt - now)}`
+        : "";
+      out.push(
+        `${label} ▕${bar(r, 20)}▏ ${Math.round(r)}%  (사용 ${Math.round(w.pct ?? 0)}%)${reset ? "  ·  " + reset : ""} | font=Menlo color=${heatRemainHex(r)}`,
+      );
+    };
+    winRow("5시간 남음", cusage.fiveHour);
+    winRow("주간 남음 ", cusage.weekly);
+    if (cusage.fable) winRow(`${cusage.fable.model} 남음`, cusage.fable);
     out.push(
-      `${label} ▕${bar(r, 20)}▏ ${Math.round(r)}%  (사용 ${Math.round(w.pct ?? 0)}%)${reset ? "  ·  " + reset : ""} | font=Menlo color=${heatRemainHex(r)}`,
-    );
-  };
-  winRow("5시간 남음", cusage.fiveHour);
-  winRow("주간 남음 ", cusage.weekly);
-  if (cusage.fable) winRow(`${cusage.fable.model} 남음`, cusage.fable);
-  out.push(
-    `측정 ${fmtDur(now - cusage.measuredAt)} 전 (Claude 실시간) | size=11 color=#8b949e`,
-  );
-} else {
-  out.push("한도 데이터 없음 (usage-cache.json 미발견) | color=gray");
-}
-if (claude && !claude.error) {
-  out.push(
-    `블록 비용  $${claude.cost.toFixed(2)}  ·  ${fmtTok(claude.tokens)} 토큰  ·  $${claude.costPerHour?.toFixed(1) ?? "?"}/h | font=Menlo size=11 color=#8b949e`,
-  );
-}
-// 오늘 모델별 사용 (최대 모델 대비 막대)
-if (cmodels && cmodels.models.length) {
-  out.push(
-    `오늘 모델별  ·  합 $${cmodels.total.toFixed(0)} | size=11 color=#8b949e`,
-  );
-  const maxCost = cmodels.models[0].cost || 1;
-  for (const m of cmodels.models) {
-    const g = bar((m.cost / maxCost) * 100, 12);
-    const label = shortModel(m.name).padEnd(9, " ");
-    out.push(
-      `${label}▕${g}▏ $${m.cost.toFixed(1)}  ${fmtTok(m.tokens)} | font=Menlo`,
+      `측정 ${fmtDur(now - cusage.measuredAt)} 전 (Claude 실시간) | size=11 color=#8b949e`,
     );
   }
+  if (claude && !claude.error) {
+    out.push(
+      `블록 비용  $${claude.cost.toFixed(2)}  ·  ${fmtTok(claude.tokens)} 토큰  ·  $${claude.costPerHour?.toFixed(1) ?? "?"}/h | font=Menlo size=11 color=#8b949e`,
+    );
+  }
+  // 오늘 모델별 사용 (최대 모델 대비 막대)
+  if (cmodels && cmodels.models.length) {
+    out.push(
+      `오늘 모델별  ·  합 $${cmodels.total.toFixed(0)} | size=11 color=#8b949e`,
+    );
+    const maxCost = cmodels.models[0].cost || 1;
+    for (const m of cmodels.models) {
+      const g = bar((m.cost / maxCost) * 100, 12);
+      const label = shortModel(m.name).padEnd(9, " ");
+      out.push(
+        `${label}▕${g}▏ $${m.cost.toFixed(1)}  ${fmtTok(m.tokens)} | font=Menlo`,
+      );
+    }
+  }
+  out.push("---");
 }
-out.push("---");
 
-// Codex 상세 (넓은 20칸 게이지)
-out.push(
-  `Codex${codex?.plan ? " · " + codex.plan : codex?.limitId ? " · " + codex.limitId : ""} | size=13 color=#8b949e`,
-);
-if (codex) {
+// Codex 상세 — hasCodex일 때만 (Codex 안 쓰면 섹션 자체 생략)
+if (hasCodex) {
+  out.push(
+    `Codex${codex?.plan ? " · " + codex.plan : codex?.limitId ? " · " + codex.limitId : ""} | size=13 color=#8b949e`,
+  );
   const p = windowState(codex.primary);
   const s = windowState(codex.secondary);
   // premium: primary/secondary 없이 크레딧 잔액만
@@ -622,10 +629,16 @@ if (codex) {
   out.push(
     `측정 ${fmtDur(age)} 전${staleWarn ? "  ·  ⚠ 리셋됐을 수 있음, Codex 쓰면 갱신" : " (Codex 세션 기준)"} | size=11 color=${staleWarn ? "#d29922" : "#8b949e"}`,
   );
-} else {
-  out.push("데이터 없음 | color=gray");
+  out.push("---");
 }
-out.push("---");
+
+// 둘 다 없으면(신규/양쪽 미사용) 안내
+if (!hasClaude && !hasCodex) {
+  out.push(
+    "Claude Code나 Codex를 실행하면 사용량이 표시됩니다 | size=12 color=gray",
+  );
+  out.push("---");
+}
 
 out.push("🔄 지금 새로고침 | refresh=true");
 // ccusage가 있을 때만(선택 의존) 대시보드 바로가기 노출
