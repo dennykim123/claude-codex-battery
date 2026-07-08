@@ -12,7 +12,7 @@
 > A macOS menu bar widget that shows your remaining **Claude Code** and **Codex** usage limits as battery icons — so you never have to open `/usage` again.
 
 <p align="center">
-  <img src="docs/menubar@2x.png" alt="Menu bar battery widget" width="320">
+  <img src="docs/menubar@2x.png" alt="Menu bar battery widget" width="280">
 </p>
 
 `C` = Claude · `X` = Codex. Each battery shows the **remaining %** of a limit window — full & green means plenty left, red means almost out. Click for a detailed breakdown with reset times.
