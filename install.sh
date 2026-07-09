@@ -50,6 +50,20 @@ echo "✅ 플러그인 배치: $PLUGIN_DIR"
 # 6) SwiftBar에 폴더 지정 + 실행
 BID=$(defaults read /Applications/SwiftBar.app/Contents/Info CFBundleIdentifier 2>/dev/null || echo "com.ameba.SwiftBar")
 defaults write "$BID" PluginDirectory -string "$PLUGIN_DIR"
+# 과거에 이 플러그인을 SwiftBar 메뉴에서 껐거나 .bak 오염 등으로 DisabledPlugins에 남아 있으면
+# 파일이 멀쩡해도 메뉴바에 안 뜬다 → 재설치 시 비활성 목록에서 제거해 확실히 켠다.
+if defaults read "$BID" DisabledPlugins 2>/dev/null | grep -q "claude-codex-usage.2m.js"; then
+  REMAIN=$(defaults read "$BID" DisabledPlugins 2>/dev/null \
+    | grep -oE '"[^"]+"' | tr -d '"' | grep -v "^claude-codex-usage.2m.js$" || true)
+  defaults delete "$BID" DisabledPlugins 2>/dev/null || true
+  if [ -n "$REMAIN" ]; then
+    while IFS= read -r p; do [ -n "$p" ] && defaults write "$BID" DisabledPlugins -array-add "$p"; done <<< "$REMAIN"
+  fi
+  echo "ⓘ  플러그인이 SwiftBar 비활성 목록에 있어 자동으로 다시 켰습니다"
+fi
+# SwiftBar가 이미 실행 중이면 open만으론 새 폴더/활성화를 다시 안 읽으므로 완전 재시작
+osascript -e 'tell application "SwiftBar" to quit' >/dev/null 2>&1 || true
+sleep 1
 open -a SwiftBar
 
 # 7) 로그인 항목 등록 → 재부팅/재로그인 후에도 자동으로 다시 뜸
