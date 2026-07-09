@@ -423,6 +423,34 @@ function getClaudeUsage() {
   }
 }
 
+// ── 1d. Claude Desktop 사용률 기록 ─────────────────────────
+// Desktop 앱은 Claude Code의 usage-cache.json 대신 plan-usage-history.json에
+// 5시간(fh) / 7일(sd) 사용률 샘플을 남긴다.
+function getClaudeDesktopUsage() {
+  const f = `${HOME}/Library/Application Support/Claude/plan-usage-history.json`;
+  try {
+    const d = JSON.parse(readFileSync(f, "utf8"));
+    const samples = Array.isArray(d.samples) ? d.samples : [];
+    const sample = samples[samples.length - 1];
+    const u = sample?.u || {};
+    const fiveHour = Number(u.fh);
+    const sevenDay = Number(u.sd);
+    if (!Number.isFinite(fiveHour) && !Number.isFinite(sevenDay)) return null;
+    const clamp = (v) =>
+      Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
+    return {
+      measuredAt: sample?.t
+        ? Math.floor(Number(sample.t) / 1000)
+        : Math.floor(statSync(f).mtimeMs / 1000),
+      org: sample?.org || null,
+      fiveHour: { pct: clamp(fiveHour) },
+      weekly: { pct: clamp(sevenDay) },
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── 2. Codex: 가장 신선한 rate_limits ──────────────────────
 function walkJsonl(dir, out) {
   let entries;
@@ -523,16 +551,18 @@ function maybeAutoRefreshCodex(codex) {
 const claude = getClaude();
 const cusage = getClaudeUsage();
 const cmodels = getClaudeModels();
+const desktopUsage = getClaudeDesktopUsage();
 const codex = getCodex();
 maybeAutoRefreshCodex(codex); // 소진+오래됨 시 백그라운드 갱신 (throttle)
 const out = [];
 
 // 메뉴바: 배터리 잔량 아이콘 (전부 "남은 %")
 //   Claude(usage-cache): C5=5시간세션 · CW=주간전체 · CF=Fable 주간
+//   Desktop(history)    : D5=5시간 · DW=주간
 //   Codex(rate_limits) : X5=5시간 · XW=주간
 const rem = (pct) => (pct == null ? null : Math.max(0, 100 - pct));
 // 한쪽만 쓰는 사용자 대응: 데이터가 있는 서비스만 표시
-const hasClaude = !!cusage || !!(claude && !claude.error);
+const hasClaude = !!cusage || !!desktopUsage || !!(claude && !claude.error);
 const hasCodex = !!codex;
 const battItems = [];
 // Claude — usage-cache 있으면 3종, 없어도 ccusage 블록이 있으면 C5만. 둘 다 없으면 Claude 배터리 생략.
@@ -543,6 +573,10 @@ if (cusage) {
     battItems.push({ label: "CF", remain: rem(cusage.fable.pct) });
 } else if (claude && !claude.error) {
   battItems.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct) });
+}
+if (desktopUsage) {
+  battItems.push({ label: "D5", remain: rem(desktopUsage.fiveHour?.pct) });
+  battItems.push({ label: "DW", remain: rem(desktopUsage.weekly?.pct) });
 }
 // Codex — 세션 데이터 있을 때만. Codex 안 쓰는 사람에겐 X 배터리 자체를 안 그림.
 if (codex && (codex.primary || codex.secondary)) {
@@ -574,7 +608,9 @@ const codexLegend =
     ? "X = Codex 크레딧"
     : "X5·XW = Codex 5시간·주간";
 const legendParts = [];
-if (hasClaude) legendParts.push("C5·CW·CF = Claude 5시간·주간·Fable");
+if (cusage || (claude && !claude.error))
+  legendParts.push("C5·CW·CF = Claude Code 5시간·주간·Fable");
+if (desktopUsage) legendParts.push("D5·DW = Claude Desktop 5시간·주간");
 if (hasCodex) legendParts.push(codexLegend);
 if (legendParts.length) {
   out.push(
@@ -585,7 +621,10 @@ if (legendParts.length) {
 
 // Claude 상세 — hasClaude일 때만 (Claude Code 안 쓰면 섹션 자체 생략)
 if (hasClaude) {
-  out.push("Claude Code | size=13 color=#8b949e");
+  const hasClaudeCodeDetail = !!cusage || !!(claude && !claude.error);
+  if (hasClaudeCodeDetail) {
+    out.push("Claude Code | size=13 color=#8b949e");
+  }
   if (cusage) {
     const winRow = (label, w) => {
       if (!w) return;
@@ -611,8 +650,29 @@ if (hasClaude) {
       `블록 비용  $${claude.cost.toFixed(2)}  ·  ${fmtTok(claude.tokens)} 토큰  ·  $${claude.costPerHour?.toFixed(1) ?? "?"}/h | font=Menlo size=11 color=#8b949e`,
     );
   }
+  if (hasClaudeCodeDetail) {
+    out.push("---");
+  }
+  if (desktopUsage) {
+    out.push("Claude Desktop | size=13 color=#8b949e");
+    const desktopRow = (label, w) => {
+      if (!w || w.pct == null) return;
+      const r = Math.max(0, 100 - (w.pct ?? 0));
+      out.push(
+        `${label} ▕${bar(r, 20)}▏ ${Math.round(r)}%  (사용 ${Math.round(w.pct ?? 0)}%) | font=Menlo color=${heatRemainHex(r)}`,
+      );
+    };
+    desktopRow("5시간 남음", desktopUsage.fiveHour);
+    desktopRow("주간 남음 ", desktopUsage.weekly);
+    const age = now - desktopUsage.measuredAt;
+    const staleWarn = age > 3 * 3600;
+    out.push(
+      `측정 ${fmtDur(age)} 전 (Claude Desktop 기준)${staleWarn ? "  ·  오래된 샘플일 수 있음" : ""} | size=11 color=${staleWarn ? "#d29922" : "#8b949e"}`,
+    );
+    out.push("---");
+  }
   // 오늘 모델별 사용 (최대 모델 대비 막대)
-  if (cmodels && cmodels.models.length) {
+  if (hasClaudeCodeDetail && cmodels && cmodels.models.length) {
     out.push(
       `오늘 모델별  ·  합 $${cmodels.total.toFixed(0)} | size=11 color=#8b949e`,
     );
@@ -624,8 +684,8 @@ if (hasClaude) {
         `${label}▕${g}▏ $${m.cost.toFixed(1)}  ${fmtTok(m.tokens)} | font=Menlo`,
       );
     }
+    out.push("---");
   }
-  out.push("---");
 }
 
 // Codex 상세 — hasCodex일 때만 (Codex 안 쓰면 섹션 자체 생략)
