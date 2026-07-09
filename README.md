@@ -11,6 +11,8 @@
 
 > A macOS menu bar widget that shows your remaining **Claude Code** and **Codex** usage limits as battery icons — so you never have to open `/usage` again.
 
+> **Windows?** A native system-tray port lives in [`windows/`](windows/README.md) — same data sources, zero dependencies (compiles with the `csc.exe` built into Windows).
+
 <p align="center">
   <img src="docs/menubar@2x.png" alt="Menu bar battery widget" width="280">
 </p>
