@@ -45,7 +45,7 @@ const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── 자동 업데이트 (알림 + 원클릭) ──
-const VERSION = "1.1.1";
+const VERSION = "1.2.0";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -389,10 +389,21 @@ function getClaudeModels() {
   }
 }
 
-// ── 1c. Claude 실제 rate limit (usage-cache.json, Claude Code가 실시간 갱신) ──
-// 5시간 세션 / 주간 전체 / Fable 주간(weekly_scoped) 사용률
+// ── 1c. Claude real rate limits (usage-cache.json) ─────────
+// Claude Code only exposes rate limits via statusline stdin. The statusline
+// hook installed by install.sh (.ccb-limits-cache.js) records them into this
+// cache file. The old MEMORY/STATE path is kept for pre-v1.2 manual setups.
 function getClaudeUsage() {
-  const f = `${HOME}/.claude/MEMORY/STATE/usage-cache.json`;
+  for (const f of [
+    `${HOME}/.claude/swiftbar/usage-cache.json`,
+    `${HOME}/.claude/MEMORY/STATE/usage-cache.json`,
+  ]) {
+    const r = readUsageCache(f);
+    if (r) return r;
+  }
+  return null;
+}
+function readUsageCache(f) {
   try {
     const d = JSON.parse(readFileSync(f, "utf8"));
     const measuredAt = Math.floor(statSync(f).mtimeMs / 1000);
@@ -574,7 +585,14 @@ const codexLegend =
     ? "X = Codex 크레딧"
     : "X5·XW = Codex 5시간·주간";
 const legendParts = [];
-if (hasClaude) legendParts.push("C5·CW·CF = Claude 5시간·주간·Fable");
+// legend must match the batteries actually drawn (CF only when fable exists)
+if (cusage)
+  legendParts.push(
+    cusage.fable
+      ? "C5·CW·CF = Claude 5시간·주간·Fable"
+      : "C5·CW = Claude 5시간·주간",
+  );
+else if (claude && !claude.error) legendParts.push("C5 = Claude 5시간");
 if (hasCodex) legendParts.push(codexLegend);
 if (legendParts.length) {
   out.push(

@@ -25,7 +25,7 @@ Built as a single [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin — on
 
 | Group | Batteries | Source |
 |-------|-----------|--------|
-| **`C` Claude** | 5-hour session · weekly · **Fable** (top-model weekly cap) | `~/.claude/MEMORY/STATE/usage-cache.json` — updated live by Claude Code |
+| **`C` Claude** | 5-hour session · weekly | `rate_limits` from Claude Code's statusline feed, cached by an installed hook ([details](#how-it-works)) |
 | **`X` Codex** | 5-hour · weekly (or credit balance on the premium plan) | `~/.codex/sessions/**/*.jsonl` → `rate_limits` |
 
 Click the widget for a dropdown with, per limit:
@@ -34,7 +34,6 @@ Click the widget for a dropdown with, per limit:
 Claude Code
   5h remaining   ▕██████████████░░░░░░▏ 70%  (used 30%)  · resets 3h 18m
   weekly         ▕██████▋░░░░░░░░░░░░░▏ 33%  (used 67%)  · resets 3d 21h
-  Fable          ▕████░░░░░░░░░░░░░░░░▏ 26%  (used 74%)  · resets 3d 21h
   today by model ▕████████████▏ Fable $75 · Opus $46 · Sonnet $5 …
 
 Codex · prolite
@@ -53,7 +52,7 @@ Colors follow a traffic-light scale: green ≥ 50 % left, amber < 50 %, red < 20
 | **macOS** | ✅ | — |
 | **[SwiftBar](https://github.com/swiftbar/SwiftBar)** | ✅ | `brew install swiftbar` |
 | **[bun](https://bun.sh)** | ✅ | `curl -fsSL https://bun.sh/install \| bash` |
-| **Claude Code** | ✅ for `C` batteries | needs `~/.claude/MEMORY/STATE/usage-cache.json` to exist |
+| **Claude Code** | ✅ for `C` batteries | `install.sh` hooks into your statusline to cache the rate-limit data ([details](#how-it-works)) |
 | **Codex CLI** | optional | for the `X` batteries; without it, only Claude is shown |
 | **[ccusage](https://github.com/ryoppippi/ccusage)** | optional | adds the cost / token / per-model breakdown in the dropdown — **the battery works fully without it** |
 
@@ -73,8 +72,9 @@ cd claude-codex-battery
 
 1. Verify **bun** and **SwiftBar** are present (and tell you how to install them if not)
 2. Copy the plugin into `~/.swiftbar-plugins/`, rewriting the shebang to your machine's `bun` path *(SwiftBar runs plugins with a minimal `PATH`, so an absolute shebang is required)*
-3. Point SwiftBar at the plugin folder and launch it
-4. Register SwiftBar as a login item, so the battery comes back automatically after a reboot
+3. Wire the **rate-limit cache hook** into Claude Code's statusline (`~/.claude/settings.json`) — Claude Code only exposes rate limits to the statusline command, so the hook caches them for the widget and passes your existing statusline through untouched (a backup of `settings.json` is kept as `.ccb-bak`)
+4. Point SwiftBar at the plugin folder and launch it
+5. Register SwiftBar as a login item, so the battery comes back automatically after a reboot
 
 No `npm install`, no bundled libraries — the plugin is a single self-contained script.
 
@@ -91,6 +91,9 @@ sed "1s|.*|#!$(command -v bun)|" claude-codex-usage.2m.js > ~/.swiftbar-plugins/
 chmod +x ~/.swiftbar-plugins/claude-codex-usage.2m.js
 defaults write com.ameba.SwiftBar PluginDirectory -string ~/.swiftbar-plugins
 open -a SwiftBar
+# wire the Claude rate-limit cache hook into your statusline:
+cp ccb-limits-cache.js ~/.swiftbar-plugins/.ccb-limits-cache.js
+bun ~/.swiftbar-plugins/.ccb-limits-cache.js --install
 ```
 
 ---
@@ -116,11 +119,11 @@ To turn the check off entirely, comment out the `getUpdateInfo()` call near the 
 
 ## How accurate / in-sync is it?
 
-**Claude — effectively real-time.** The limits come from `usage-cache.json`, the *same* rate-limit data Claude Code uses for its own `/usage`. The widget just reads that file (every 2 min), so its numbers track Claude's. Measured on a live machine: the widget's **weekly and Fable readings matched the source file exactly**; the 5-hour figure differed only by the live drift between two reads a minute apart.
+**Claude — live while you use Claude Code.** The limits are the *same* rate-limit data Claude Code shows in `/usage`: Claude Code pipes them to your statusline, the installed hook caches them, and the widget reads the cache every 2 min. While a Claude Code session is open the numbers track `/usage` in real time; when no session is running, the widget shows the last measured values (labeled "measured N ago" in the dropdown).
 
 **Codex — as fresh as your last Codex run.** Codex writes rate-limit data to its session logs *only while you use it*, and records no reset time. So the value is a snapshot from your most recent session — the dropdown labels it "measured N ago" and warns past 3h. Run Codex and it re-syncs instantly.
 
-**TL;DR** — Claude is live (same source as `/usage`); Codex is a clearly-labeled snapshot from your last session, not a live feed.
+**TL;DR** — Claude is live while Claude Code runs (same source as `/usage`); Codex is a clearly-labeled snapshot from your last session, not a live feed.
 
 ---
 
@@ -129,7 +132,7 @@ To turn the check off entirely, comment out the `getUpdateInfo()` call near the 
 The whole thing is one `.js` file run by bun on a timer.
 
 - **Battery icons** are drawn pixel-by-pixel into an RGBA buffer and encoded to PNG using only `node:zlib` (hand-rolled CRC32 + IHDR/IDAT/IEND chunks). A 5×7 bitmap font renders the numbers and the `C`/`X` group labels. SwiftBar displays the PNG at pixels ÷ 2 pt.
-- **Claude limits** come from `usage-cache.json`, which Claude Code keeps current. The Fable cap is the `weekly_scoped` entry.
+- **Claude limits** come from the statusline: Claude Code pipes `rate_limits` (5-hour / weekly used % + reset times) to the configured `statusLine` command — its **only** programmatic outlet for this data. `install.sh` wires in a small hook (`.ccb-limits-cache.js`) that writes them to `~/.claude/swiftbar/usage-cache.json` and then runs your original statusline unchanged. The `CF` (top-model weekly) battery appears only if your cache carries a model-scoped `weekly` entry — the statusline feed currently exposes just the two plan-wide windows.
 - **Codex limits** come from the newest session's `rate_limits`. The premium plan reports a `credits` object instead of percentages when exhausted; the widget handles both shapes.
 
 ### Codex has one quirk
