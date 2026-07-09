@@ -558,7 +558,7 @@ const out = [];
 
 // 메뉴바: 배터리 잔량 아이콘 (전부 "남은 %")
 //   Claude(usage-cache): C5=5시간세션 · CW=주간전체 · CF=Fable 주간
-//   Desktop(history)    : D5=5시간 · DW=주간
+//   Desktop(history)    : C5=5시간 · CW=주간
 //   Codex(rate_limits) : X5=5시간 · XW=주간
 const rem = (pct) => (pct == null ? null : Math.max(0, 100 - pct));
 // 한쪽만 쓰는 사용자 대응: 데이터가 있는 서비스만 표시
@@ -575,8 +575,8 @@ if (cusage) {
   battItems.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct) });
 }
 if (desktopUsage) {
-  battItems.push({ label: "D5", remain: rem(desktopUsage.fiveHour?.pct) });
-  battItems.push({ label: "DW", remain: rem(desktopUsage.weekly?.pct) });
+  battItems.push({ label: "C5", remain: rem(desktopUsage.fiveHour?.pct) });
+  battItems.push({ label: "CW", remain: rem(desktopUsage.weekly?.pct) });
 }
 // Codex — 세션 데이터 있을 때만. Codex 안 쓰는 사람에겐 X 배터리 자체를 안 그림.
 if (codex && (codex.primary || codex.secondary)) {
@@ -610,7 +610,7 @@ const codexLegend =
 const legendParts = [];
 if (cusage || (claude && !claude.error))
   legendParts.push("C5·CW·CF = Claude Code 5시간·주간·Fable");
-if (desktopUsage) legendParts.push("D5·DW = Claude Desktop 5시간·주간");
+if (desktopUsage) legendParts.push("C5·CW = Claude Desktop 5시간·주간");
 if (hasCodex) legendParts.push(codexLegend);
 if (legendParts.length) {
   out.push(
