@@ -17,7 +17,7 @@
 
 `C` = Claude · `X` = Codex. Each battery shows the **remaining %** of a limit window — full & green means plenty left, red means almost out. Click for a detailed breakdown with reset times.
 
-Built as a single [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin — one self-contained script, **no third-party libraries**. The battery icons are rendered as PNGs from scratch in pure JavaScript (`node:zlib` only), so there's no image library and no `npm install`. Network calls: **one to Anthropic's official usage endpoint** (the same data `/usage` shows, fetched with your own local Claude Code login — [see Privacy](#privacy--security)) and an **optional once-a-day update check** ([see Updating](#updating)). (`ccusage` is an optional extra for the cost breakdown.)
+Built as a single [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin — one self-contained script, **no third-party libraries**. The battery icons are rendered as PNGs from scratch in pure JavaScript (`node:zlib` only), so there's no image library and no `npm install`. Network calls: **two official usage endpoints** — Anthropic's and OpenAI's — each fetched with your own local Claude Code / Codex login (the same data `/usage` and Codex's `/status` show — [see Privacy](#privacy--security)), plus an **optional once-a-day update check** ([see Updating](#updating)). (`ccusage` is an optional extra for the cost breakdown.)
 
 ---
 
@@ -26,7 +26,7 @@ Built as a single [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin — on
 | Group | Batteries | Source |
 |-------|-----------|--------|
 | **`C` Claude** | 5-hour session · weekly · **Fable** (top-model weekly cap) | Anthropic's OAuth usage API — queried live with your local Claude Code login; **account-level**, so usage from every device/surface is included |
-| **`X` Codex** | 5-hour · weekly (or credit balance on the premium plan) | `~/.codex/sessions/**/*.jsonl` → `rate_limits` |
+| **`X` Codex** | 5-hour · weekly (or credit balance on the premium plan) | Codex's account-level usage API (`backend-api/wham/usage`), queried live with your local Codex login — same data Codex CLI's `/status` shows; falls back to `~/.codex/sessions/**/*.jsonl` if offline |
 
 Click the widget for a dropdown with, per limit:
 
@@ -108,9 +108,10 @@ To turn the check off entirely, comment out the `getUpdateInfo()` call near the 
 ## Privacy & security
 
 - **Claude limits come straight from Anthropic.** The widget reads your Claude Code OAuth token from the macOS Keychain (item `Claude Code-credentials`) and calls `api.anthropic.com/api/oauth/usage` — the same endpoint `/usage` uses. The token is sent **only to api.anthropic.com**, passed via stdin (never visible in `ps`), and never written to disk or logs. macOS may show a one-time Keychain permission prompt — click **Always Allow**. (Clicking *Deny* makes macOS re-prompt on every refresh — if you'd rather the widget never touch the Keychain, run `touch ~/.claude/swiftbar/.no-live` instead; it then reads local cache files only, like v1.1.)
-- **No other secrets read.** Codex `auth.json` and API keys are never touched.
-- **No usage data leaves your machine.** Nothing is uploaded anywhere; the only outbound calls are the Anthropic usage query above and the optional daily update check ([Updating](#updating)).
-- **No conversation content.** From Codex session logs it parses only the `rate_limits` object (numbers), never the messages.
+- **Codex limits come straight from OpenAI.** Likewise, the widget reads your Codex OAuth token from `~/.codex/auth.json` and calls `chatgpt.com/backend-api/wham/usage` — the same account-level endpoint Codex CLI polls itself. The token is sent **only to chatgpt.com**, via stdin (never visible in `ps`), and never written to disk or logs. (`touch ~/.claude/swiftbar/.no-live` disables both live queries; it then reads local files only.)
+- **No API keys touched.** Only the OAuth login tokens above are read — never any `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`.
+- **No usage data leaves your machine.** Nothing is uploaded anywhere; the only outbound calls are the two usage queries above (to Anthropic and OpenAI) and the optional daily update check ([Updating](#updating)).
+- **No conversation content.** From the Codex session-log fallback it parses only the `rate_limits` object (numbers), never the messages.
 - **Auditable in one sitting.** The whole widget is a single dependency-free script — grep for `curl`/`fetch` and you've seen every network call it can make.
 
 ---
@@ -119,9 +120,9 @@ To turn the check off entirely, comment out the `getUpdateInfo()` call near the 
 
 **Claude — live.** Every refresh queries Anthropic's usage API directly with your local Claude Code login — the *same* server-side data `/usage` shows, so the numbers match it by construction. Because the limits are **account-level**, usage from every surface and device (terminal, desktop app, web, another machine) is already included. If the query fails (offline, logged out), the widget falls back to its last successful response and labels the reading with its age in amber.
 
-**Codex — as fresh as your last Codex run.** Codex writes rate-limit data to its session logs *only while you use it*, and records no reset time. So the value is a snapshot from your most recent session — the dropdown labels it "measured N ago" and warns past 3h. Run Codex and it re-syncs instantly.
+**Codex — live too.** The widget queries the same account-level usage endpoint Codex CLI polls internally (`backend-api/wham/usage`), using your local Codex login token. It's a read-only call that costs **no tokens**, and because it's account-level, all your machines see the *same* numbers — so two Macs stay in sync. If the query fails (offline, logged out), it falls back to the newest local session log (labeled "measured N ago", warns past 3h) and then to its last live response.
 
-**TL;DR** — Claude is live (same source as `/usage`); Codex is a clearly-labeled snapshot from your last session, not a live feed.
+**TL;DR** — Both Claude and Codex are live and account-level, so every device shows the same numbers. When a live query fails, each falls back to a clearly-labeled cached/snapshot reading.
 
 ---
 
@@ -131,7 +132,7 @@ The whole thing is one `.js` file run by bun on a timer.
 
 - **Battery icons** are drawn pixel-by-pixel into an RGBA buffer and encoded to PNG using only `node:zlib` (hand-rolled CRC32 + IHDR/IDAT/IEND chunks). A 5×7 bitmap font renders the numbers and the `C`/`X` group labels. SwiftBar displays the PNG at pixels ÷ 2 pt.
 - **Claude limits** are fetched from Anthropic's OAuth usage endpoint using the Claude Code login token in your Keychain, with the last good response cached at `~/.claude/swiftbar/.claude-usage.json` as an offline fallback. The Fable cap is the `weekly_scoped` entry.
-- **Codex limits** come from the newest session's `rate_limits`. The premium plan reports a `credits` object instead of percentages when exhausted; the widget handles both shapes.
+- **Codex limits** are fetched live from `backend-api/wham/usage` with the token in `~/.codex/auth.json`, normalized to the same shape as the session-log format, and cached at `~/.claude/swiftbar/.codex-usage.json` as an offline fallback (with the newest session log as a second fallback). The premium plan reports a `credits` object instead of percentages when exhausted; the widget handles both shapes.
 
 ### Codex has one quirk
 
@@ -152,7 +153,7 @@ If you'd rather it never spend tokens on its own, comment out the `maybeAutoRefr
 | Battery size | **↕ row in the dropdown** — toggles between big (4×6 font, default) and small (3×5 font, ~25% narrower); stored in `~/.claude/swiftbar/.batt-size` |
 | Color thresholds | `heatRemain` / `heatRemainHex` (20 % / 50 %) |
 | Disable Codex auto-refresh | comment out `maybeAutoRefreshCodex(codex)` |
-| Disable live Claude API / Keychain access | `touch ~/.claude/swiftbar/.no-live` (falls back to local cache files) |
+| Disable live Claude + Codex APIs (Keychain / token access) | `touch ~/.claude/swiftbar/.no-live` (falls back to local cache files) |
 | Which Claude limits to show | the `battItems.push(...)` block |
 
 ---

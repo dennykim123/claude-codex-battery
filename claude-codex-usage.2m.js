@@ -46,7 +46,7 @@ const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── 자동 업데이트 (알림 + 원클릭) ──
-const VERSION = "1.3.1";
+const VERSION = "1.3.3";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -201,8 +201,32 @@ const FONT35 = {
 // 프리셋별 지오메트리: font/자간, 캡슐(bw×bh), 배치(capw·간격), 캔버스 높이, 숫자 y오프셋
 const PRESET =
   SIZE === "small"
-    ? { font: FONT35, adv: () => 4, bw: 14, bh: 9, capw: 16, gap: 3, ggap: 7, pad: 1, lblgap: 2, H: 9, dy: 2 }
-    : { font: FONT46, adv: (ch) => (ch === "1" ? 4 : 5), bw: 18, bh: 10, capw: 20, gap: 5, ggap: 10, pad: 2, lblgap: 3, H: 12, dy: 3 };
+    ? {
+        font: FONT35,
+        adv: () => 4,
+        bw: 14,
+        bh: 9,
+        capw: 16,
+        gap: 3,
+        ggap: 7,
+        pad: 1,
+        lblgap: 2,
+        H: 9,
+        dy: 2,
+      }
+    : {
+        font: FONT46,
+        adv: (ch) => (ch === "1" ? 4 : 5),
+        bw: 18,
+        bh: 10,
+        capw: 20,
+        gap: 5,
+        ggap: 10,
+        pad: 2,
+        lblgap: 3,
+        H: 12,
+        dy: 3,
+      };
 const NUM = PRESET.font;
 // altCol/boundaryX 지정 시: 픽셀 x가 채움 경계(boundaryX) 왼쪽이면 altCol(밝은 채움 위 대비),
 // 오른쪽(빈 배경)이면 col. 지정 없으면 col 단색(그룹 라벨용).
@@ -246,7 +270,15 @@ function drawCapsule(cv, x, midY, remain, ink, dark) {
     const s = String(Math.round(v));
     const tx = x + Math.floor((bw - numW(s)) / 2);
     // 채움(밝은 system color) 위 픽셀은 어두운 숫자, 빈 배경 위는 ink → 어디서나 대비 확보
-    drawNum(cv, tx, midY - PRESET.dy, s, ink, [30, 30, 30], x + 2 + (fw > 0 ? fw : 0));
+    drawNum(
+      cv,
+      tx,
+      midY - PRESET.dy,
+      s,
+      ink,
+      [30, 30, 30],
+      x + 2 + (fw > 0 ? fw : 0),
+    );
   }
   return x + bw + 2;
 }
@@ -425,6 +457,11 @@ function getClaudeModels() {
 // 실패 시 폴백: 자체 캐시(마지막 성공 응답) → 레거시 usage-cache.json 파일.
 const CLAUDE_STATE_DIR = `${HOME}/.claude/swiftbar`;
 const CLAUDE_USAGE_CACHE = `${CLAUDE_STATE_DIR}/.claude-usage.json`;
+// Codex도 계정 단위 라이브 조회가 가능하다: Codex CLI가 자체적으로 60초마다 폴링하는
+// ChatGPT usage 엔드포인트(/backend-api/wham/usage)를 auth.json의 토큰으로 직접 GET한다.
+// 응답은 요청(토큰 소비) 없이 현재 한도만 주므로, 세션 로그(로컬·맥마다 다름) 대신 이걸 우선.
+const CODEX_AUTH = `${HOME}/.codex/auth.json`;
+const CODEX_USAGE_CACHE = `${CLAUDE_STATE_DIR}/.codex-usage.json`;
 const LEGACY_USAGE_FILES = [
   `${HOME}/.claude/MEMORY/STATE/usage-cache.json`,
   `${HOME}/.claude/PAI/MEMORY/STATE/usage-cache.json`,
@@ -552,7 +589,78 @@ function walkJsonl(dir, out) {
     }
   }
 }
-function getCodex() {
+// auth.json에서 ChatGPT 토큰을 읽는다(.no-live면 라이브 조회 안 함, Claude와 같은 스위치).
+function readCodexToken() {
+  if (existsSync(`${CLAUDE_STATE_DIR}/.no-live`)) return null;
+  try {
+    const d = JSON.parse(readFileSync(CODEX_AUTH, "utf8"));
+    const t = d?.tokens?.access_token;
+    if (t) return { token: t, account: d?.tokens?.account_id || "" };
+  } catch {}
+  return null;
+}
+
+// 라이브: ChatGPT usage 엔드포인트를 직접 GET → 계정 단위 최신 한도(전 디바이스 동일).
+// 응답 필드명이 세션 로그와 다르므로(primary_window/limit_window_seconds/reset_at)
+// 세션 로그 형식(primary/window_minutes/resets_at)으로 정규화해 이후 로직을 그대로 쓴다.
+function fetchCodexUsageLive() {
+  const c = readCodexToken();
+  if (!c) return null;
+  try {
+    // Authorization은 stdin(-H @-)으로 — ps 목록에 토큰 노출 방지 (Claude와 동일 패턴)
+    const raw = execSync(
+      `/usr/bin/curl -fsS --max-time 5 -H @- -H "ChatGPT-Account-Id: ${c.account}" -H "User-Agent: codex-cli" https://chatgpt.com/backend-api/wham/usage`,
+      {
+        encoding: "utf8",
+        timeout: 8000,
+        input: `Authorization: Bearer ${c.token}\n`,
+        stdio: ["pipe", "pipe", "ignore"],
+      },
+    );
+    const d = JSON.parse(raw);
+    const rl = d?.rate_limit;
+    const norm = (w) =>
+      w
+        ? {
+            used_percent: w.used_percent ?? 0,
+            window_minutes: w.limit_window_seconds
+              ? Math.round(w.limit_window_seconds / 60)
+              : null,
+            resets_at: w.reset_at ?? null,
+          }
+        : null;
+    const primary = norm(rl?.primary_window);
+    const secondary = norm(rl?.secondary_window);
+    // credits는 창(primary/secondary)이 전혀 없을 때만 의미(premium 소진형). 세션 로그와 동일.
+    const credits =
+      !primary && !secondary && d?.credits
+        ? {
+            has_credits: d.credits.has_credits,
+            unlimited: d.credits.unlimited,
+            balance: d.credits.balance,
+          }
+        : null;
+    if (!primary && !secondary && !credits) return null;
+    const result = {
+      measuredAt: Math.floor(Date.now() / 1000),
+      live: true,
+      limitId: null,
+      plan: d?.plan_type || null,
+      primary,
+      secondary,
+      credits,
+    };
+    try {
+      mkdirSync(CLAUDE_STATE_DIR, { recursive: true });
+      writeFileSync(CODEX_USAGE_CACHE, JSON.stringify(result));
+    } catch {}
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function getCodexFromSessions() {
   if (!existsSync(CODEX_SESSIONS)) return null;
   const files = [];
   walkJsonl(CODEX_SESSIONS, files);
@@ -573,6 +681,7 @@ function getCodex() {
         if (rl && (rl.primary || rl.secondary || rl.credits)) {
           return {
             measuredAt: Math.floor(f.mtime / 1000),
+            live: false,
             limitId: rl.limit_id || null,
             plan: rl.plan_type || null,
             primary: rl.primary || null,
@@ -583,6 +692,20 @@ function getCodex() {
       }
     } catch {}
   }
+  return null;
+}
+
+// 라이브(계정 단위, 전 디바이스 동일) 우선 → 실패 시 로컬 세션 로그 → 마지막 라이브 캐시.
+function getCodex() {
+  const live = fetchCodexUsageLive();
+  if (live) return live;
+  const sess = getCodexFromSessions();
+  if (sess) return sess;
+  try {
+    const c = JSON.parse(readFileSync(CODEX_USAGE_CACHE, "utf8"));
+    if (c && (c.primary || c.secondary || c.credits))
+      return { ...c, live: false };
+  } catch {}
   return null;
 }
 function windowState(w) {
@@ -598,6 +721,7 @@ function windowState(w) {
 function maybeAutoRefreshCodex(codex) {
   try {
     if (!codex) return;
+    if (codex.live) return; // 라이브면 이미 최신 — 토큰 써가며 codex 굴릴 필요 없음
     // 소진 판정: credits 소진 OR 어떤 창이든 100% 사용
     let exhausted = false;
     if (codex.credits) {
@@ -787,9 +911,11 @@ if (hasCodex) {
     out.push(`      ${reset} | font=Menlo size=11 color=#8b949e`);
   }
   const age = now - codex.measuredAt;
-  const staleWarn = age > 3 * 3600; // 3시간+ 오래됨 → 리셋됐을 수 있음
+  const staleWarn = !codex.live && age > 3 * 3600; // 3시간+ 오래됨 → 리셋됐을 수 있음
   out.push(
-    `측정 ${fmtDur(age)} 전${staleWarn ? "  ·  ⚠ 리셋됐을 수 있음, Codex 쓰면 갱신" : " (Codex 세션 기준)"} | size=11 color=${staleWarn ? "#d29922" : "#8b949e"}`,
+    codex.live
+      ? `라이브 (ChatGPT usage API — 전 디바이스 합산) | size=11 color=#8b949e`
+      : `측정 ${fmtDur(age)} 전${staleWarn ? "  ·  ⚠ 리셋됐을 수 있음, Codex 쓰면 갱신" : " (Codex 세션 기준 · 라이브 실패 폴백)"} | size=11 color=${staleWarn ? "#d29922" : "#8b949e"}`,
   );
   out.push("---");
 }
