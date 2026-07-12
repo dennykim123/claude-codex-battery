@@ -134,14 +134,7 @@ The whole thing is one `.js` file run by bun on a timer.
 - **Claude limits** are fetched from Anthropic's OAuth usage endpoint using the Claude Code login token in your Keychain, with the last good response cached at `~/.claude/swiftbar/.claude-usage.json` as an offline fallback. The Fable cap is the `weekly_scoped` entry.
 - **Codex limits** are fetched live from `backend-api/wham/usage` with the token in `~/.codex/auth.json`, normalized to the same shape as the session-log format, and cached at `~/.claude/swiftbar/.codex-usage.json` as an offline fallback (with the newest session log as a second fallback). The premium plan reports a `credits` object instead of percentages when exhausted; the widget handles both shapes.
 
-### Codex has one quirk
-
-Codex only writes limit data to session logs **while you use it**, and doesn't record a reset time when exhausted. So if you haven't run Codex in a while, the value can be stale. The widget:
-
-- flags values older than 3 hours in the dropdown, and
-- **optionally** runs `codex exec --sandbox read-only` in the background to refresh — but *only* when Codex is exhausted **and** the value is 2h+ old, at most once every 6 hours (≈4×/day, ~20k tokens each).
-
-If you'd rather it never spend tokens on its own, comment out the `maybeAutoRefreshCodex(codex)` call near the render section.
+Both queries are read-only and cost **no tokens** — you never have to *use* Claude or Codex to get a fresh reading, and every device sees the same account-level numbers. Older builds refreshed Codex by quietly running a real `codex` command in the background (spending tokens) when the session-log value went stale; that's gone — the live endpoint makes it unnecessary.
 
 ---
 
@@ -152,7 +145,6 @@ If you'd rather it never spend tokens on its own, comment out the `maybeAutoRefr
 | Refresh interval | filename `.2m.` → `.1m.`, `.5m.`, `.30s.`, … |
 | Battery size | **↕ row in the dropdown** — toggles between big (4×6 font, default) and small (3×5 font, ~25% narrower); stored in `~/.claude/swiftbar/.batt-size` |
 | Color thresholds | `heatRemain` / `heatRemainHex` (20 % / 50 %) |
-| Disable Codex auto-refresh | comment out `maybeAutoRefreshCodex(codex)` |
 | Disable live Claude + Codex APIs (Keychain / token access) | `touch ~/.claude/swiftbar/.no-live` (falls back to local cache files) |
 | Which Claude limits to show | the `battItems.push(...)` block |
 

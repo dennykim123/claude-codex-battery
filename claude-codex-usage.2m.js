@@ -41,12 +41,11 @@ function findBin(name, extra = []) {
   return name; // 최후: PATH에 의존
 }
 const CCUSAGE = findBin("ccusage");
-const CODEX_BIN = findBin("codex");
 const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── 자동 업데이트 (알림 + 원클릭) ──
-const VERSION = "1.3.3";
+const VERSION = "1.4.0";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -61,7 +60,7 @@ function cmpVer(a, b) {
   return 0;
 }
 // 캐시된 최신 버전을 읽고, 24h+ 지났으면 백그라운드로 GitHub VERSION만 조용히 확인
-// (렌더를 막지 않음 — codex 자동갱신과 동일한 spawn+unref 패턴)
+// (렌더를 막지 않음 — spawn+unref로 detached 실행)
 function getUpdateInfo() {
   let cache = null;
   try {
@@ -717,49 +716,11 @@ function windowState(w) {
     stale,
   };
 }
-// 소진 + 오래됨일 때만 하루 최대 몇 회 Codex를 백그라운드로 굴려 리셋 감지 (throttle 6h)
-function maybeAutoRefreshCodex(codex) {
-  try {
-    if (!codex) return;
-    if (codex.live) return; // 라이브면 이미 최신 — 토큰 써가며 codex 굴릴 필요 없음
-    // 소진 판정: credits 소진 OR 어떤 창이든 100% 사용
-    let exhausted = false;
-    if (codex.credits) {
-      const cr = codex.credits;
-      exhausted = !cr.unlimited && (!cr.has_credits || Number(cr.balance) <= 0);
-    } else {
-      const p = windowState(codex.primary),
-        s = windowState(codex.secondary);
-      exhausted = Boolean((p && p.pct >= 100) || (s && s.pct >= 100));
-    }
-    if (!exhausted) return;
-    if (now - codex.measuredAt < 2 * 3600) return; // 2h+ 오래됐을 때만
-    const tsFile = `${HOME}/.claude/swiftbar/.codex-refresh-ts`;
-    let last = 0;
-    try {
-      last = parseInt(readFileSync(tsFile, "utf8").trim(), 10) || 0;
-    } catch {}
-    if (now - last < 6 * 3600) return; // throttle: 6h 간격 (하루 최대 4회)
-    writeFileSync(tsFile, String(now));
-    // detached 백그라운드 실행 — 위젯을 막지 않음. 완료되면 세션 로그 갱신됨.
-    const child = spawn(
-      "/bin/sh",
-      [
-        "-c",
-        `echo "reply ok" | "${CODEX_BIN}" exec --sandbox read-only --skip-git-repo-check - >/dev/null 2>&1`,
-      ],
-      { detached: true, stdio: "ignore", cwd: HOME },
-    );
-    child.unref();
-  } catch {}
-}
-
 // ── 렌더링 ─────────────────────────────────────────────────
 const claude = getClaude();
 const cusage = getClaudeUsage();
 const cmodels = getClaudeModels();
 const codex = getCodex();
-maybeAutoRefreshCodex(codex); // 소진+오래됨 시 백그라운드 갱신 (throttle)
 const out = [];
 
 // 메뉴바: 배터리 잔량 아이콘 (전부 "남은 %")
@@ -911,11 +872,10 @@ if (hasCodex) {
     out.push(`      ${reset} | font=Menlo size=11 color=#8b949e`);
   }
   const age = now - codex.measuredAt;
-  const staleWarn = !codex.live && age > 3 * 3600; // 3시간+ 오래됨 → 리셋됐을 수 있음
   out.push(
     codex.live
       ? `라이브 (ChatGPT usage API — 전 디바이스 합산) | size=11 color=#8b949e`
-      : `측정 ${fmtDur(age)} 전${staleWarn ? "  ·  ⚠ 리셋됐을 수 있음, Codex 쓰면 갱신" : " (Codex 세션 기준 · 라이브 실패 폴백)"} | size=11 color=${staleWarn ? "#d29922" : "#8b949e"}`,
+      : `⚠ 라이브 조회 실패 — 로그인·네트워크 확인 (${fmtDur(age)} 전 로컬 로그값) | size=11 color=#d29922`,
   );
   out.push("---");
 }
