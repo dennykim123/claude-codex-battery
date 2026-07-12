@@ -45,7 +45,7 @@ const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── 자동 업데이트 (알림 + 원클릭) ──
-const VERSION = "1.4.0";
+const VERSION = "1.4.1";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -628,8 +628,18 @@ function fetchCodexUsageLive() {
             resets_at: w.reset_at ?? null,
           }
         : null;
-    const primary = norm(rl?.primary_window);
-    const secondary = norm(rl?.secondary_window);
+    // primary_window/secondary_window는 "5시간/주간" 고정이 아니라 그때 활성인 창이다
+    // (5시간 미사용 시 주간 창이 primary로 오기도 함). limit_window_seconds로 판별해
+    // 올바른 슬롯(5시간=primary / 주간=secondary)에 배치한다. 안 온 창은 null.
+    let primary = null;
+    let secondary = null;
+    for (const w of [rl?.primary_window, rl?.secondary_window]) {
+      if (!w) continue;
+      const secs = w.limit_window_seconds || 0;
+      if (secs && secs <= 6 * 3600)
+        primary = norm(w); // ~5시간
+      else secondary = norm(w); // ~주간(7일)
+    }
     // credits는 창(primary/secondary)이 전혀 없을 때만 의미(premium 소진형). 세션 로그와 동일.
     const credits =
       !primary && !secondary && d?.credits
@@ -745,8 +755,9 @@ if (codex && (codex.primary || codex.secondary)) {
   // prolite: 5시간·주간 % 창
   const p = windowState(codex.primary);
   const s = windowState(codex.secondary);
-  battItems.push({ label: "X5", remain: p ? Math.max(0, 100 - p.pct) : null });
-  battItems.push({ label: "XW", remain: s ? Math.max(0, 100 - s.pct) : null });
+  // 그때 활성인 창만 그린다 — 없는 창은 빈 캡슐 대신 생략 (5시간 미사용 시 X5 없음)
+  if (p) battItems.push({ label: "X5", remain: Math.max(0, 100 - p.pct) });
+  if (s) battItems.push({ label: "XW", remain: Math.max(0, 100 - s.pct) });
 } else if (codex && codex.credits) {
   // premium: 크레딧 잔액 (총량 미제공 → 있음=100 / 소진=0 / 무제한=100)
   const cr = codex.credits;

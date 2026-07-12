@@ -61,23 +61,40 @@ if defaults read "$BID" DisabledPlugins 2>/dev/null | grep -q "claude-codex-usag
   fi
   echo "ⓘ  플러그인이 SwiftBar 비활성 목록에 있어 자동으로 다시 켰습니다"
 fi
-# SwiftBar가 이미 실행 중이면 open만으론 새 폴더/활성화를 다시 안 읽으므로 완전 재시작
-osascript -e 'tell application "SwiftBar" to quit' >/dev/null 2>&1 || true
+# 7) launchd로 SwiftBar를 KeepAlive 관리 → 재부팅·절전복귀·"크래시"로 죽어도 즉시 자동 부활.
+#    (SwiftBar 앱은 가끔 스스로 꺼지는데, 로그인 항목은 로그인 시 1회뿐이라 크래시엔 무력하다.
+#     KeepAlive는 프로세스가 사라지는 즉시 다시 띄우므로 "자꾸 꺼짐 + 재실행 번거로움"을 함께 해결.)
+SWIFTBAR_QUIT=$(osascript -e 'tell application "SwiftBar" to quit' 2>/dev/null || true)
 sleep 1
-open -a SwiftBar
-
-# 7) 로그인 항목 등록 → 재부팅/재로그인 후에도 자동으로 다시 뜸
-if osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null | grep -qi swiftbar; then
-  echo "✅ 로그인 항목에 이미 등록됨 (재부팅 후 자동 실행)"
+# 중복 실행/등록 방지: 기존 로그인 항목이 있으면 제거하고 launchd로 일원화
+osascript -e 'tell application "System Events" to delete (every login item whose name contains "SwiftBar")' >/dev/null 2>&1 || true
+LABEL="com.dennykim.claude-codex-battery"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+mkdir -p "$HOME/Library/LaunchAgents"
+cat > "$PLIST" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>/Applications/SwiftBar.app/Contents/MacOS/SwiftBar</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+PL
+launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+  echo "✅ launchd 자동부활 등록 — 꺼져도(크래시·절전·재부팅) 즉시 다시 뜹니다"
 else
-  if osascript -e 'tell application "System Events" to make login item at end with properties {path:"/Applications/SwiftBar.app", hidden:false}' >/dev/null 2>&1; then
-    echo "✅ 로그인 항목 등록 (재부팅 후 자동 실행)"
-  else
-    echo "ⓘ  로그인 항목 자동 등록 실패 — SwiftBar 메뉴에서 'Launch at Login'을 켜주세요"
-  fi
+  open -a SwiftBar
+  echo "ⓘ  launchd 등록 실패 — SwiftBar만 실행했습니다 (메뉴에서 'Launch at Login' 권장)"
 fi
 
 echo "────────────────────────────────────"
 echo "✅ 완료! 메뉴바 오른쪽에 배터리가 뜹니다."
 echo "   갱신 주기: 2분 (파일명 .2m. 을 .1m. .5m. 등으로 바꾸면 조정)"
-echo "   재부팅 후에도 자동으로 다시 뜹니다."
+echo "   꺼져도 자동으로 다시 뜹니다. 완전히 끄려면:"
+echo "   launchctl bootout gui/\$(id -u)/$LABEL && osascript -e 'quit app \"SwiftBar\"'"
