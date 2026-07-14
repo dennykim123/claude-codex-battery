@@ -128,39 +128,9 @@ function encodePNG(w, h, rgba) {
     mk("IEND", Buffer.alloc(0)),
   ]);
 }
-const SCALE = 2;
-function makeCanvas(wl, hl) {
-  const w = wl * SCALE,
-    h = hl * SCALE;
-  const buf = Buffer.alloc(w * h * 4, 0);
-  const set = (x, y, col) => {
-    if (x < 0 || y < 0 || x >= wl || y >= hl) return;
-    const [r, g, b, a = 255] = col;
-    for (let dy = 0; dy < SCALE; dy++)
-      for (let dx = 0; dx < SCALE; dx++) {
-        const px = ((y * SCALE + dy) * w + (x * SCALE + dx)) * 4;
-        buf[px] = r;
-        buf[px + 1] = g;
-        buf[px + 2] = b;
-        buf[px + 3] = a;
-      }
-  };
-  return { w, h, buf, set };
-}
-const _rect = (cv, x, y, rw, rh, col) => {
-  for (let j = 0; j < rh; j++)
-    for (let i = 0; i < rw; i++) cv.set(x + i, y + j, col);
-};
-const _stroke = (cv, x, y, rw, rh, col) => {
-  for (let i = 1; i < rw - 1; i++) {
-    cv.set(x + i, y, col);
-    cv.set(x + i, y + rh - 1, col);
-  }
-  for (let j = 1; j < rh - 1; j++) {
-    cv.set(x, y + j, col);
-    cv.set(x + rw - 1, y + j, col);
-  }
-};
+// 배터리 아이콘은 고해상도(SS배)로 그린 뒤 평균 다운샘플 → 안티에일리어싱된
+// 둥근 모서리/외곽선을 얻는다. (렌더러는 renderBatteryImage 안에 자체 포함)
+const SS = 3; // 내부 슈퍼샘플 배율
 // ── 크기 프리셋: big(기본) / small — 드롭다운 ↕ 행 또는 ~/.claude/swiftbar/.batt-size 로 전환 ──
 const SIZE_FILE = `${HOME}/.claude/swiftbar/.batt-size`;
 let SIZE = "big";
@@ -182,6 +152,9 @@ const FONT46 = {
   9: ["0110", "1001", "1001", "0111", "0001", "0110"],
   C: ["0110", "1001", "1000", "1000", "1001", "0110"],
   X: ["1001", "1001", "0110", "0110", "1001", "1001"],
+  D: ["1110", "1001", "1001", "1001", "1001", "1110"],
+  W: ["1001", "1001", "1001", "1011", "1101", "1001"],
+  ":": ["0", "0", "1", "0", "1", "0"],
 };
 // 3x5 클래식 픽셀 폰트 (small 프리셋)
 const FONT35 = {
@@ -197,56 +170,93 @@ const FONT35 = {
   9: ["111", "101", "111", "001", "111"],
   C: ["111", "100", "100", "100", "111"],
   X: ["101", "101", "010", "101", "101"],
+  D: ["110", "101", "101", "101", "110"],
+  W: ["101", "101", "101", "111", "101"],
+  ":": ["0", "1", "0", "1", "0"],
 };
-// 프리셋별 지오메트리: font/자간, 캡슐(bw×bh), 배치(capw·간격), 캔버스 높이, 숫자 y오프셋
-const PRESET =
+// 라벨/계정이니셜용 대문자 폰트(A-Z) — 숫자 폰트보다 넓게(작은 대각선이 다운샘플에 살아남도록).
+// big: 5x6, small: 5x5. D/W 라벨과 계정 첫 글자가 이 폰트를 공유한다.
+const ALPHA46 = {
+  A: ["01110", "10001", "10001", "11111", "10001", "10001"],
+  B: ["11110", "10001", "11110", "10001", "10001", "11110"],
+  C: ["01110", "10001", "10000", "10000", "10001", "01110"],
+  D: ["11110", "10001", "10001", "10001", "10001", "11110"],
+  E: ["11111", "10000", "11110", "10000", "10000", "11111"],
+  F: ["11111", "10000", "11110", "10000", "10000", "10000"],
+  G: ["01110", "10001", "10000", "10011", "10001", "01111"],
+  H: ["10001", "10001", "11111", "10001", "10001", "10001"],
+  I: ["11111", "00100", "00100", "00100", "00100", "11111"],
+  J: ["00111", "00010", "00010", "00010", "10010", "01100"],
+  K: ["10001", "10010", "11100", "10010", "10010", "10001"],
+  L: ["10000", "10000", "10000", "10000", "10000", "11111"],
+  M: ["10001", "11011", "10101", "10001", "10001", "10001"],
+  N: ["10001", "11001", "10101", "10011", "10001", "10001"],
+  O: ["01110", "10001", "10001", "10001", "10001", "01110"],
+  P: ["11110", "10001", "11110", "10000", "10000", "10000"],
+  Q: ["01110", "10001", "10001", "10101", "10010", "01101"],
+  R: ["11110", "10001", "11110", "10100", "10010", "10001"],
+  S: ["01111", "10000", "01110", "00001", "10001", "01110"],
+  T: ["11111", "00100", "00100", "00100", "00100", "00100"],
+  U: ["10001", "10001", "10001", "10001", "10001", "01110"],
+  V: ["10001", "10001", "10001", "10001", "01010", "00100"],
+  W: ["10001", "10001", "10001", "10101", "11011", "01010"],
+  X: ["10001", "01010", "00100", "00100", "01010", "10001"],
+  Y: ["10001", "01010", "00100", "00100", "00100", "00100"],
+  Z: ["11111", "00010", "00100", "01000", "10000", "11111"],
+};
+const ALPHA35 = {
+  A: ["01110", "10001", "11111", "10001", "10001"],
+  B: ["11110", "10001", "11110", "10001", "11110"],
+  C: ["01111", "10000", "10000", "10000", "01111"],
+  D: ["11110", "10001", "10001", "10001", "11110"],
+  E: ["11111", "10000", "11110", "10000", "11111"],
+  F: ["11111", "10000", "11110", "10000", "10000"],
+  G: ["01111", "10000", "10011", "10001", "01111"],
+  H: ["10001", "10001", "11111", "10001", "10001"],
+  I: ["11111", "00100", "00100", "00100", "11111"],
+  J: ["00111", "00010", "00010", "10010", "01100"],
+  K: ["10001", "10010", "11100", "10010", "10001"],
+  L: ["10000", "10000", "10000", "10000", "11111"],
+  M: ["10001", "11011", "10101", "10001", "10001"],
+  N: ["10001", "11001", "10101", "10011", "10001"],
+  O: ["01110", "10001", "10001", "10001", "01110"],
+  P: ["11110", "10001", "11110", "10000", "10000"],
+  Q: ["01110", "10001", "10101", "10010", "01101"],
+  R: ["11110", "10001", "11110", "10010", "10001"],
+  S: ["01111", "10000", "01110", "00001", "11110"],
+  T: ["11111", "00100", "00100", "00100", "00100"],
+  U: ["10001", "10001", "10001", "10001", "01110"],
+  V: ["10001", "10001", "10001", "01010", "00100"],
+  W: ["10001", "10001", "10101", "11011", "01010"],
+  X: ["10001", "01010", "00100", "01010", "10001"],
+  Y: ["10001", "01010", "00100", "00100", "00100"],
+  Z: ["11111", "00010", "00100", "01000", "11111"],
+};
+// 아이콘 지오메트리(출력 px = SwiftBar 표시 pt의 2배). 애플 배터리풍: 둥근 본체 + 둥근 단자.
+const GLYPH =
+  SIZE === "small"
+    ? { font: FONT35, gw: 3, gh: 5 }
+    : { font: FONT46, gw: 4, gh: 6 };
+const LABEL =
+  SIZE === "small"
+    ? { font: ALPHA35, gw: 5, gh: 5 }
+    : { font: ALPHA46, gw: 5, gh: 6 };
+const ICON =
   SIZE === "small"
     ? {
-        font: FONT35,
-        adv: () => 4,
-        bw: 14,
-        bh: 9,
-        capw: 16,
-        gap: 3,
-        ggap: 7,
-        pad: 1,
-        lblgap: 2,
-        H: 9,
-        dy: 2,
+        H: 23, bw: 32, bh: 14, rad: 4.7, sw: 1.4, // 본체
+        nub: 2.2, nubr: 0.9, nubf: 0.42, // 단자(폭·반경·본체대비 높이비)
+        numH: 6, initH: 10, // 숫자(=배터리 안 라벨)·계정이니셜 높이
+        grpGap: 4, pad: 2, labGap: 1.5, // 간격(grpGap=배터리 사이, labGap=라벨↔숫자)
+        encSw: 0.9, encRad: 5.5, encPadX: 4, encPadY: 2, encGap: 2.5, divSw: 0.8, // 계정 pill(얇게)
       }
     : {
-        font: FONT46,
-        adv: (ch) => (ch === "1" ? 4 : 5),
-        bw: 18,
-        bh: 10,
-        capw: 20,
-        gap: 5,
-        ggap: 10,
-        pad: 2,
-        lblgap: 3,
-        H: 12,
-        dy: 3,
+        H: 27, bw: 38, bh: 17, rad: 5.8, sw: 1.8,
+        nub: 2.6, nubr: 1.1, nubf: 0.42,
+        numH: 8, initH: 13,
+        grpGap: 6, pad: 2, labGap: 2,
+        encSw: 1, encRad: 6.5, encPadX: 5, encPadY: 2.5, encGap: 3, divSw: 0.9,
       };
-const NUM = PRESET.font;
-// altCol/boundaryX 지정 시: 픽셀 x가 채움 경계(boundaryX) 왼쪽이면 altCol(밝은 채움 위 대비),
-// 오른쪽(빈 배경)이면 col. 지정 없으면 col 단색(그룹 라벨용).
-const chAdv = PRESET.adv; // big: 5px('1'만 4px 커닝 — "100" 물림 방지), small: 4px
-function drawNum(cv, x, y, str, col, altCol, boundaryX) {
-  let cx = x;
-  for (const ch of str) {
-    const g = NUM[ch];
-    if (g)
-      for (let r = 0; r < g.length; r++)
-        for (let c = 0; c < g[r].length; c++)
-          if (g[r][c] === "1") {
-            const px = cx + c;
-            cv.set(px, y + r, altCol && px < boundaryX ? altCol : col);
-          }
-    cx += chAdv(ch);
-  }
-  return cx;
-}
-const numW = (s) => [...s].reduce((w, ch) => w + chAdv(ch), 0) - 1;
 // 실제 macOS 배터리 인디케이터 색 (Apple HIG system colors, 다크/라이트 각각)
 function heatRemain(r, dark) {
   if (r <= 20) return dark ? [255, 69, 58] : [255, 59, 48]; // systemRed
@@ -255,70 +265,215 @@ function heatRemain(r, dark) {
 }
 const heatRemainHex = (r) =>
   r <= 20 ? "#FF453A" : r < 50 ? "#FFD60A" : "#30D158"; // 드롭다운 게이지 (다크 기준)
-// 캡슐 하나: 테두리 + 잔량 채움 + 안에 잔량 숫자(100 포함, 항상 표시)
-function drawCapsule(cv, x, midY, remain, ink, dark) {
-  const bw = PRESET.bw,
-    bh = PRESET.bh,
-    by = midY - Math.floor(bh / 2);
-  _stroke(cv, x, by, bw, bh, ink);
-  _rect(cv, x + bw, by + 3, 2, bh - 6, ink); // 단자
-  if (remain != null) {
-    const innerW = bw - 4;
-    const v = Math.max(0, Math.min(100, remain));
-    const fw = Math.round((v / 100) * innerW);
-    if (fw > 0) _rect(cv, x + 2, by + 2, fw, bh - 4, heatRemain(remain, dark));
-    const s = String(Math.round(v));
-    const tx = x + Math.floor((bw - numW(s)) / 2);
-    // 채움(밝은 system color) 위 픽셀은 어두운 숫자, 빈 배경 위는 ink → 어디서나 대비 확보
-    drawNum(
-      cv,
-      tx,
-      midY - PRESET.dy,
-      s,
-      ink,
-      [30, 30, 30],
-      x + 2 + (fw > 0 ? fw : 0),
+// 캡슐 N개(items=[{label,remain}]). 라벨 문자(D/W 등)를 각 배터리 앞에 붙여 그린다.
+// SS배 고해상도 버퍼에 그린 뒤 프리멀티플라이드 평균으로 다운샘플 → 부드러운 외곽선/모서리.
+function renderBatteryImage(dark, items, prefix) {
+  const ink = dark ? [228, 228, 230] : [60, 60, 63];
+  const C = ICON,
+    F = GLYPH,
+    L = LABEL;
+  const numBit = C.numH / F.gh, // 숫자 1비트 크기(출력px)
+    initBit = C.initH / L.gh, // 계정 이니셜 1비트 크기
+    letterBit = C.numH / L.gh; // 배터리 안 라벨(D/W) 1비트 크기(=숫자 높이)
+  const numGap = Math.max(1, numBit * 0.7); // 숫자 글자 간격
+  const initAdv = L.gw * initBit, // 이니셜 한 글자 폭
+    letterW = L.gw * letterBit; // 배터리 안 라벨 한 글자 폭
+  const pfx = prefix && L.font[prefix] ? prefix : null; // 폰트에 있는 글자만
+  // ── 레이아웃(출력px) ──
+  // 배터리 블록 폭(본체+단자, 배터리 사이 간격 grpGap). 라벨은 이제 배터리 안에 있음.
+  let BLK = 0;
+  for (let i = 0; i < items.length; i++) {
+    if (i > 0) BLK += C.grpGap;
+    BLK += C.bw + C.nub;
+  }
+  // pfx 있으면: 계정 pill(이니셜 칸 | 배터리들)로 감싼다. 없으면 배터리만.
+  const enc = pfx ? { x0: C.pad, initX: C.pad + C.encSw + C.encPadX } : null;
+  let startX, Wpt;
+  if (enc) {
+    enc.divX = enc.initX + initAdv + C.encGap;
+    startX = enc.divX + C.divSw + C.encGap;
+    enc.x1 = startX + BLK + C.encPadX + C.encSw;
+    Wpt = enc.x1 + C.pad;
+  } else {
+    startX = C.pad;
+    Wpt = C.pad * 2 + BLK;
+  }
+  const W = Math.max(8, Math.round(Wpt)),
+    Hh = C.H;
+  const w = W * SS,
+    h = Hh * SS;
+  const buf = new Uint8ClampedArray(w * h * 4); // 고해상도 straight RGBA (배경 alpha=0)
+  const put = (x, y, col) => {
+    x |= 0;
+    y |= 0;
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const p = (y * w + x) * 4;
+    buf[p] = col[0];
+    buf[p + 1] = col[1];
+    buf[p + 2] = col[2];
+    buf[p + 3] = col[3] ?? 255;
+  };
+  // 둥근 사각형 내부 판정(픽셀 중심 기준)
+  const inRR = (px, py, x, y, rw, rh, rad) => {
+    if (px < x || py < y || px >= x + rw || py >= y + rh) return false;
+    const cx = px < x + rad ? x + rad : px > x + rw - rad ? x + rw - rad : px;
+    const cy = py < y + rad ? y + rad : py > y + rh - rad ? y + rh - rad : py;
+    const dx = px - cx,
+      dy = py - cy;
+    return dx * dx + dy * dy <= rad * rad;
+  };
+  // 둥근 사각형 채움(xClip 지정 시 그 x 왼쪽만 — 남은% 막대)
+  const region = (x, y, rw, rh, rad, col, xClip) => {
+    const x0 = Math.max(0, Math.floor(x)),
+      y0 = Math.max(0, Math.floor(y));
+    const x1 = Math.min(w, Math.ceil(x + rw)),
+      y1 = Math.min(h, Math.ceil(y + rh));
+    for (let py = y0; py < y1; py++)
+      for (let px = x0; px < x1; px++) {
+        if (xClip != null && px + 0.5 >= xClip) continue;
+        if (inRR(px + 0.5, py + 0.5, x, y, rw, rh, rad)) put(px, py, col);
+      }
+  };
+  // 둥근 테두리(외곽 RR ∖ 내부 RR)
+  const ring = (x, y, rw, rh, rad, sw, col) => {
+    const x0 = Math.max(0, Math.floor(x)),
+      y0 = Math.max(0, Math.floor(y));
+    const x1 = Math.min(w, Math.ceil(x + rw)),
+      y1 = Math.min(h, Math.ceil(y + rh));
+    for (let py = y0; py < y1; py++)
+      for (let px = x0; px < x1; px++) {
+        const cx = px + 0.5,
+          cy = py + 0.5;
+        if (
+          inRR(cx, cy, x, y, rw, rh, rad) &&
+          !inRR(cx, cy, x + sw, y + sw, rw - 2 * sw, rh - 2 * sw, Math.max(0, rad - sw))
+        )
+          put(px, py, col);
+      }
+  };
+  // 비트맵 글리프(각 비트를 정사각형으로) — SS 다운샘플이 가장자리를 부드럽게
+  // font: 글리프맵, grow: 각 비트를 이만큼 키워 획을 두껍게(라벨 볼드용)
+  const glyph = (font, ch, gx, gy, bit, colFn, grow = 0) => {
+    const rows = font[ch];
+    if (!rows) return;
+    for (let r = 0; r < rows.length; r++)
+      for (let c = 0; c < rows[r].length; c++)
+        if (rows[r][c] === "1") {
+          const fx = gx + c * bit - grow,
+            fy = gy + r * bit - grow;
+          const x0 = Math.floor(fx),
+            x1 = Math.ceil(fx + bit + grow),
+            y0 = Math.floor(fy),
+            y1 = Math.ceil(fy + bit + grow);
+          for (let yy = y0; yy < y1; yy++)
+            for (let xx = x0; xx < x1; xx++) put(xx, yy, colFn(xx));
+        }
+  };
+  // ── 그리기 ──
+  const midY = (Hh / 2) * SS;
+  // 계정 pill(둥근 컨테이너) + 구분선 + 이니셜 — 배터리들을 감싸 "이 계정의 사용량"임을 표현
+  if (enc) {
+    const encInk = [...ink, 105], // 얇고 은은하게
+      divInk = [...ink, 90];
+    const encH = C.bh + 2 * C.encPadY,
+      encY0 = Hh / 2 - encH / 2;
+    ring(
+      enc.x0 * SS,
+      encY0 * SS,
+      (enc.x1 - enc.x0) * SS,
+      encH * SS,
+      C.encRad * SS,
+      C.encSw * SS,
+      encInk,
     );
+    // 구분선(이니셜 칸 ↔ 배터리)
+    region(
+      enc.divX * SS,
+      (encY0 + C.encPadY * 0.7) * SS,
+      C.divSw * SS,
+      (encH - 2 * C.encPadY * 0.7) * SS,
+      0,
+      divInk,
+      null,
+    );
+    // 계정 이니셜(가운데, 살짝 볼드)
+    glyph(L.font, pfx, enc.initX * SS, midY - (C.initH / 2) * SS, initBit * SS, () => ink, SS * 0.45);
   }
-  return x + bw + 2;
-}
-// 캡슐 N개(items=[{label,remain}]). 그룹(C=Claude / X=Codex) 앞에 라벨 문자.
-function renderBatteryImage(dark, items) {
-  const ink = dark ? [235, 235, 235] : [45, 45, 45];
-  const CAPW = PRESET.capw,
-    GAP = PRESET.gap,
-    GGAP = PRESET.ggap,
-    PAD = PRESET.pad,
-    LBLGAP = PRESET.lblgap;
-  const H = PRESET.H;
-  const midY = Math.floor(H / 2);
-  // 폭 계산 (그룹 라벨 포함)
-  let W = PAD * 2;
-  let pg = null;
+  let x = startX * SS;
   for (let i = 0; i < items.length; i++) {
-    const g = items[i].label[0];
-    if (g !== pg) {
-      if (pg !== null) W += GGAP;
-      W += numW(g) + LBLGAP;
-      pg = g;
-    } else W += GAP;
-    W += CAPW;
+    const it = items[i],
+      g = it.label[0];
+    if (i > 0) x += C.grpGap * SS; // 배터리 사이 간격
+    const bw = C.bw * SS,
+      bh = C.bh * SS,
+      rad = C.rad * SS,
+      sw = C.sw * SS,
+      by = midY - bh / 2;
+    const v = it.remain == null ? null : Math.max(0, Math.min(100, it.remain));
+    const innerX = x + sw,
+      innerRad = Math.max(0, rad - sw),
+      innerW = bw - 2 * sw;
+    const fw = v == null ? 0 : (v / 100) * innerW;
+    // 남은% 채움 (내부 둥근 영역 클립)
+    if (v != null && fw > 0)
+      region(innerX, by + sw, innerW, bh - 2 * sw, innerRad, heatRemain(v, dark), innerX + fw);
+    ring(x, by, bw, bh, rad, sw, ink); // 외곽선
+    // 단자
+    const nubH = bh * C.nubf;
+    region(x + bw - SS * 0.4, midY - nubH / 2, C.nub * SS, nubH, C.nubr * SS, ink, null);
+    // 배터리 안: 라벨(D/W) + ":" + 수치 (예: D:100). 채움 위=어두운색 / 빈곳=ink
+    if (v != null) {
+      const nb = numBit * SS,
+        lb = letterBit * SS,
+        boundary = innerX + fw,
+        darkInk = [38, 38, 40],
+        colFn = (px) => (px < boundary ? darkInk : ink);
+      const seq = ":" + String(Math.round(v)); // 콜론+수치(숫자 폰트)
+      const colsOf = (ch) => (F.font[ch] ? F.font[ch][0].length : F.gw);
+      let seqW = 0; // 출력px
+      for (let k = 0; k < seq.length; k++) {
+        seqW += colsOf(seq[k]) * numBit;
+        if (k) seqW += numGap;
+      }
+      const contentW = (letterW + numGap + seqW) * SS;
+      let tx = x + (bw - contentW) / 2;
+      const ty = midY - (C.numH / 2) * SS;
+      glyph(L.font, g, tx, ty, lb, colFn, SS * 0.3); // 라벨 D/W
+      tx += letterW * SS + numGap * SS;
+      for (let k = 0; k < seq.length; k++) {
+        const ch = seq[k];
+        glyph(F.font, ch, tx, ty, nb, colFn, ch === ":" ? SS * 0.25 : 0);
+        tx += colsOf(ch) * nb + numGap * SS;
+      }
+    }
+    x += bw + C.nub * SS;
   }
-  const cv = makeCanvas(Math.max(W, 8), H);
-  let x = PAD;
-  pg = null;
-  for (let i = 0; i < items.length; i++) {
-    const g = items[i].label[0];
-    if (g !== pg) {
-      if (pg !== null) x += GGAP;
-      drawNum(cv, x, midY - PRESET.dy, g, ink); // 그룹 라벨 C 또는 X
-      x += numW(g) + LBLGAP;
-      pg = g;
-    } else x += GAP;
-    drawCapsule(cv, x, midY, items[i].remain, ink, dark);
-    x += CAPW;
-  }
-  return encodePNG(cv.w, cv.h, cv.buf).toString("base64");
+  // ── 프리멀티플라이드 평균 다운샘플 (SS×SS → 1) ──
+  const out = Buffer.alloc(W * Hh * 4);
+  for (let oy = 0; oy < Hh; oy++)
+    for (let ox = 0; ox < W; ox++) {
+      let R = 0,
+        Gg = 0,
+        B = 0,
+        A = 0;
+      for (let sy = 0; sy < SS; sy++)
+        for (let sx = 0; sx < SS; sx++) {
+          const p = ((oy * SS + sy) * w + (ox * SS + sx)) * 4;
+          const a = buf[p + 3];
+          R += buf[p] * a;
+          Gg += buf[p + 1] * a;
+          B += buf[p + 2] * a;
+          A += a;
+        }
+      const op = (oy * W + ox) * 4;
+      out[op + 3] = Math.round(A / (SS * SS));
+      if (A > 0) {
+        out[op] = Math.round(R / A);
+        out[op + 1] = Math.round(Gg / A);
+        out[op + 2] = Math.round(B / A);
+      }
+    }
+  return encodePNG(W, Hh, out).toString("base64");
 }
 function isDarkMode() {
   try {
@@ -330,6 +485,18 @@ function isDarkMode() {
     );
   } catch {
     return false;
+  }
+}
+// 현재 Claude Code 로그인 계정의 이니셜(이메일 첫 글자, 대문자) — 어느 계정 사용량인지 식별용.
+// 네트워크와 무관하게 로컬 ~/.claude.json 에서 읽는다. 없으면 null(=이니셜 미표시).
+function accountInitial() {
+  try {
+    const j = JSON.parse(readFileSync(`${HOME}/.claude.json`, "utf8"));
+    const a = j.oauthAccount || {};
+    const m = String(a.emailAddress || a.displayName || "").match(/[A-Za-z]/);
+    return m ? m[0].toUpperCase() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -772,12 +939,10 @@ const hasCodex = !!codex;
 const battItems = [];
 // Claude — usage-cache 있으면 3종, 없어도 ccusage 블록이 있으면 C5만. 둘 다 없으면 Claude 배터리 생략.
 if (cusage) {
-  battItems.push({ label: "C5", remain: rem(cusage.fiveHour?.pct) });
-  battItems.push({ label: "CW", remain: rem(cusage.weekly?.pct) });
-  if (cusage.fable)
-    battItems.push({ label: "CF", remain: rem(cusage.fable.pct) });
+  battItems.push({ label: "D", remain: rem(cusage.fiveHour?.pct) });
+  battItems.push({ label: "W", remain: rem(cusage.weekly?.pct) });
 } else if (claude && !claude.error) {
-  battItems.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct) });
+  battItems.push({ label: "D", remain: Math.max(0, 100 - claude.elapsedPct) });
 }
 // Codex — 세션 데이터 있을 때만. Codex 안 쓰는 사람에겐 X 배터리 자체를 안 그림.
 if (codex && (codex.primary || codex.secondary)) {
@@ -799,28 +964,26 @@ if (codex && (codex.primary || codex.secondary)) {
 // 잔량 숫자가 캡슐 안에 들어감 → 메뉴바는 이미지만. 라벨은 드롭다운 범례.
 // 둘 다 없으면(신규/양쪽 미사용) 배터리 대신 안내 아이콘.
 if (battItems.length) {
-  out.push(`| image=${renderBatteryImage(isDarkMode(), battItems)}`);
+  out.push(
+    `| image=${renderBatteryImage(isDarkMode(), battItems, accountInitial())}`,
+  );
 } else {
   out.push("🔋 —");
 }
 out.push("---");
-const codexLegend =
-  codex?.credits && !codex.primary && !codex.secondary
-    ? "X = Codex 크레딧"
-    : "X5·XW = Codex 5시간·주간";
-const legendParts = [];
-if (hasClaude) legendParts.push("C5·CW·CF = Claude 5시간·주간·Fable");
-if (hasCodex) legendParts.push(codexLegend);
-if (legendParts.length) {
-  out.push(
-    `🔋 남은 %  ·  ${legendParts.join("  ·  ")} | size=11 color=#8b949e`,
-  );
-  out.push("---");
-}
 
 // Claude 상세 — hasClaude일 때만 (Claude Code 안 쓰면 섹션 자체 생략)
 if (hasClaude) {
-  out.push("Claude Code | size=13 color=#8b949e");
+  // 계정 표시 — 메뉴바 앞 이니셜(I 등)이 어느 계정인지 드롭다운에서 확인
+  let acctLabel = "Claude Code";
+  try {
+    const a =
+      JSON.parse(readFileSync(`${HOME}/.claude.json`, "utf8")).oauthAccount ||
+      {};
+    const who = a.emailAddress || a.displayName;
+    if (who) acctLabel += ` · ${who}`;
+  } catch {}
+  out.push(`${acctLabel} | size=13 color=#8b949e`);
   if (cusage) {
     const winRow = (label, w) => {
       if (!w) return;
@@ -834,9 +997,8 @@ if (hasClaude) {
         `${label} ▕${bar(r, 20)}▏ ${Math.round(r)}%  (사용 ${Math.round(w.pct ?? 0)}%)${reset ? "  ·  " + reset : ""} | font=Menlo color=${heatRemainHex(r)}`,
       );
     };
-    winRow("5시간 남음", cusage.fiveHour);
-    winRow("주간 남음 ", cusage.weekly);
-    if (cusage.fable) winRow(`${cusage.fable.model} 남음`, cusage.fable);
+    winRow("D · 5시간 남음", cusage.fiveHour);
+    winRow("W · 주간 남음 ", cusage.weekly);
     out.push(
       cusage.live
         ? `라이브 (Anthropic usage API — 전 디바이스 합산) | size=11 color=#8b949e`
@@ -928,40 +1090,7 @@ if (!hasClaude && !hasCodex) {
   out.push("---");
 }
 
-// 새 버전이 있으면 강조 원클릭 업데이트, 없어도 수동 업데이트 행은 항상 노출
-const upd = getUpdateInfo();
-if (upd.hasUpdate) {
-  out.push(
-    `🆕 v${upd.latest} 업데이트 (현재 v${VERSION}) | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true color=#28963f`,
-  );
-} else {
-  out.push(
-    `⬆️ 지금 업데이트 — GitHub 최신으로 교체 (현재 v${VERSION}) | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true`,
-  );
-}
+// 새로고침 버튼만 유지 (나머지 메뉴 항목은 요청에 따라 제거)
 out.push("🔄 지금 새로고침 | refresh=true");
-// ccusage가 있을 때만(선택 의존) 대시보드 바로가기 노출
-if (claude && !claude.error) {
-  out.push(
-    `📊 ccusage 대시보드 열기 | bash="${CCUSAGE}" param1=blocks param2=--active terminal=true`,
-  );
-}
-out.push(
-  `v${VERSION}  ·  Claude & Codex Usage Battery | size=11 color=#8b949e`,
-);
-// 크기 전환 — .batt-size 파일에 반대 프리셋을 기록하고 즉시 새로고침
-{
-  const other = SIZE === "big" ? "small" : "big";
-  out.push(
-    `↕ 배터리 크기: ${SIZE === "big" ? "크게 (기본)" : "작게"} — 클릭하면 ${other === "big" ? "크게" : "작게"}로 | bash=/bin/sh param1=-c param2="mkdir -p '${HOME}/.claude/swiftbar' && echo ${other} > '${SIZE_FILE}'" terminal=false refresh=true size=11 color=#8b949e`,
-  );
-}
-out.push(
-  `⭐ github.com/dennykim123/claude-codex-battery | href=https://github.com/dennykim123/claude-codex-battery size=11 color=#8b949e`,
-);
-// 위젯 끄기 — SwiftBar의 플러그인 비활성화 URL. 재활성화: SwiftBar 메뉴 → Plugins
-out.push(
-  `✕ 위젯 끄기 (SwiftBar 설정에서 재활성화) | href=swiftbar://disableplugin?plugin=claude-codex-usage size=11 color=#8b949e`,
-);
 
 console.log(out.join("\n"));
