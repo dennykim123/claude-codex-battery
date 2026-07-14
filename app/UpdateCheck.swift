@@ -16,6 +16,14 @@ func cmpVer(_ a: String, _ b: String) -> Int {
   return 0
 }
 
+// 최신 버전 즉시 조회 (자체 업데이트용 — 캐시 우회)
+func fetchLatestVersion() -> String? {
+  guard let d = httpGet(VERSION_URL, headers: [:], timeout: 8),
+        let v = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !v.isEmpty else { return nil }
+  return v
+}
+
 func getUpdateInfo(now: Int) -> (latest: String?, hasUpdate: Bool) {
   let cache = jd(readJSONFile(UPDATE_CACHE))
   let age = cache.flatMap { jn($0["checkedAt"]) }.map { now - Int($0) } ?? Int.max

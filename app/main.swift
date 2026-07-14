@@ -81,10 +81,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
           SMAppService.mainApp.status != .enabled else { return }
     UserDefaults.standard.set(true, forKey: "askedAutoStart")
     let a = NSAlert()
-    a.messageText = "로그인 시 자동으로 시작할까요?"
-    a.informativeText = "맥을 켤 때마다 메뉴바에 사용량 배터리가 자동으로 표시됩니다. 나중에 메뉴에서 언제든 바꿀 수 있습니다."
-    a.addButton(withTitle: "자동 시작")
-    a.addButton(withTitle: "나중에")
+    a.messageText = L("로그인 시 자동으로 시작할까요?", "Start automatically at login?")
+    a.informativeText = L("맥을 켤 때마다 메뉴바에 사용량 배터리가 자동으로 표시됩니다. 나중에 메뉴에서 언제든 바꿀 수 있습니다.",
+                          "The usage battery will appear in your menu bar every time you start your Mac. You can change this anytime from the menu.")
+    a.addButton(withTitle: L("자동 시작", "Start at Login"))
+    a.addButton(withTitle: L("나중에", "Later"))
     NSApp.activate(ignoringOtherApps: true)
     if a.runModal() == .alertFirstButtonReturn {
       try? SMAppService.mainApp.register()
@@ -151,6 +152,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     rerender() // 체크마크만 갱신하면 됨 — 재수집 불필요
   }
 
+  // 원클릭 자동 업데이트 — 다운로드→서명 검증→자기 교체→재실행. 실패 시 릴리스 페이지 폴백
+  @objc func selfUpdate(_ sender: NSMenuItem) {
+    guard let v = sender.representedObject as? String else { return }
+    statusItem.button?.image = nil
+    statusItem.button?.title = L("⬇︎ 업데이트…", "⬇︎ Updating…")
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      do {
+        try downloadAndInstallUpdate(version: v) { _ in }
+        DispatchQueue.main.async { relaunchAfterUpdate() }
+      } catch {
+        DispatchQueue.main.async {
+          self?.rerender()
+          if let url = URL(string: "\(REPO_URL)/releases") { NSWorkspace.shared.open(url) }
+        }
+      }
+    }
+  }
+
   // ccusage 대시보드를 터미널로 — .command 파일 경유 (권한 프롬프트 없이 Terminal 실행)
   @objc func openDashboard() {
     guard let bin = ccusagePath() else { return }
@@ -161,6 +180,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f)
     NSWorkspace.shared.open(URL(fileURLWithPath: f))
   }
+}
+
+// ── --self-update: 최신 버전 확인 후 즉시 설치 (헤드리스 검증·수동 업데이트용) ──
+if CommandLine.arguments.contains("--self-update") {
+  guard let latest = fetchLatestVersion() else { print("version check failed"); exit(1) }
+  if cmpVer(latest, APP_VERSION) > 0 {
+    do {
+      try downloadAndInstallUpdate(version: latest) { print($0) }
+      print("updated: v\(APP_VERSION) → v\(latest) at \(Bundle.main.bundlePath)")
+    } catch {
+      print("update failed: \(error)")
+      exit(1)
+    }
+  } else {
+    print("already latest (v\(APP_VERSION), remote v\(latest))")
+  }
+  exit(0)
 }
 
 // ── --dump-menu: UI 없이 드롭다운 메뉴 구조를 텍스트로 출력 (검증용) ──

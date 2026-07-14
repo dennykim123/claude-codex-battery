@@ -14,6 +14,13 @@ func findBin(_ name: String) -> String? {
 // 라이브 조회 옵트아웃 스위치 (위젯과 동일: touch ~/.claude/swiftbar/.no-live)
 func liveDisabled() -> Bool { FileManager.default.fileExists(atPath: "\(STATE_DIR)/.no-live") }
 
+// UI 언어: 시스템 언어가 한국어면 한국어, 아니면 영어 (테스트용 CCB_LANG=ko|en 강제 가능)
+let UI_KO: Bool = {
+  if let f = ProcessInfo.processInfo.environment["CCB_LANG"] { return f == "ko" }
+  return Locale.preferredLanguages.first?.hasPrefix("ko") ?? false
+}()
+func L(_ ko: String, _ en: String) -> String { UI_KO ? ko : en }
+
 func fmtDur(_ secs: Int) -> String {
   if secs <= 0 { return "0m" }
   let h = secs / 3600, m = (secs % 3600) / 60

@@ -107,7 +107,9 @@ open -a SwiftBar
 
 ## Updating
 
-The widget checks GitHub for a newer version **at most once a day** — a tiny background request for the `VERSION` file. When a new version is out, a green **🆕 update** row appears in the dropdown; click it to replace the plugin in place and refresh (your previous copy is kept as `.bak`). There's also an always-visible **⬆️ update now** row that replaces the plugin with the latest `main` on demand — no waiting for the daily check.
+**Native app** — checks GitHub for a newer version once a day (a tiny request for the `VERSION` file). When one is out, a green **Install update** row appears in the dropdown: one click downloads the signed zip from Releases, **verifies its Developer ID code signature** (team-pinned, so a tampered zip is refused), replaces itself in place, and relaunches. Headless equivalent: `ClaudeCodexBattery.app/Contents/MacOS/ClaudeCodexBattery --self-update`.
+
+**SwiftBar plugin** — the widget checks GitHub for a newer version **at most once a day** — a tiny background request for the `VERSION` file. When a new version is out, a green **🆕 update** row appears in the dropdown; click it to replace the plugin in place and refresh (your previous copy is kept as `.bak`). There's also an always-visible **⬆️ update now** row that replaces the plugin with the latest `main` on demand — no waiting for the daily check.
 
 Prefer to do it yourself? From your clone: `git pull && ./install.sh`.
 
