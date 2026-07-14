@@ -17,7 +17,7 @@
 
 `C` = Claude · `X` = Codex. Each battery shows the **remaining %** of a limit window — full & green means plenty left, red means almost out. Click for a detailed breakdown with reset times.
 
-Built as a single [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin — one self-contained script, **no third-party libraries**. The battery icons are rendered as PNGs from scratch in pure JavaScript (`node:zlib` only), so there's no image library and no `npm install`. Network calls: **two official usage endpoints** — Anthropic's and OpenAI's — each fetched with your own local Claude Code / Codex login (the same data `/usage` and Codex's `/status` show — [see Privacy](#privacy--security)), plus an **optional once-a-day update check** ([see Updating](#updating)). (`ccusage` is an optional extra for the cost breakdown.)
+Ships two ways: a **notarized native app** (double-click install, zero prerequisites) and a single [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin — one self-contained script, **no third-party libraries**. The battery icons are rendered as PNGs from scratch in pure JavaScript (`node:zlib` only), so there's no image library and no `npm install`. Network calls: **two official usage endpoints** — Anthropic's and OpenAI's — each fetched with your own local Claude Code / Codex login (the same data `/usage` and Codex's `/status` show — [see Privacy](#privacy--security)), plus an **optional once-a-day update check** ([see Updating](#updating)). (`ccusage` is an optional extra for the cost breakdown.)
 
 ---
 
@@ -48,6 +48,8 @@ Colors follow a traffic-light scale: green ≥ 50 % left, amber < 50 %, red < 20
 
 ## Requirements
 
+> Using the **native app**? Skip this table — it has no prerequisites (Claude Code just needs to be logged in; `ccusage` optional). The table below is for the SwiftBar-plugin variant.
+
 | | Required? | Install |
 |---|---|---|
 | **macOS** | ✅ | — |
@@ -62,6 +64,14 @@ Colors follow a traffic-light scale: green ≥ 50 % left, amber < 50 %, red < 20
 ---
 
 ## Install
+
+### Option 1 — Native app (no SwiftBar, no bun)
+
+Download `ClaudeCodexBattery-vX.Y.Z.zip` from [**Releases**](https://github.com/dennykim123/claude-codex-battery/releases), unzip, drag `ClaudeCodexBattery.app` into `/Applications`, and open it. That's it — the app is **signed & notarized**, so it runs with a double-click, and on first launch it offers to **start at login**.
+
+It's a native Swift port of the same widget: identical battery rendering, identical dropdown, same privacy model ([see Privacy](#privacy--security) — your tokens go only to the two usage endpoints). `ccusage` remains optional for the cost breakdown. Source lives in [`app/`](app/) — `./build.sh` for a local ad-hoc build, `./release.sh` for the notarized release.
+
+### Option 2 — SwiftBar plugin (single auditable script)
 
 ```bash
 git clone https://github.com/dennykim123/claude-codex-battery.git
@@ -150,9 +160,12 @@ Both queries are read-only and cost **no tokens** — you never have to *use* Cl
 
 ---
 
-## Why a SwiftBar plugin (and not a standalone app)?
+## App or plugin — which one?
 
-A single script stays dependency-free, easy to audit, and trivial to fork — and its audience (Claude Code / Codex developers) already lives in the terminal, so `brew install swiftbar` is no barrier. A native `.app` would drop the SwiftBar requirement but adds a Swift codebase, Apple code-signing + notarization ($99/yr), and ongoing maintenance. **Roadmap:** if there's enough demand, ship a signed one-click menu-bar `.app` (likely bundling SwiftBar) for non-terminal users.
+Both variants show exactly the same batteries and dropdown, from the same two usage endpoints.
+
+- **Native app** — one notarized `.app`, zero prerequisites, double-click and done. For anyone who just wants the battery in the menu bar (this was the roadmap item; it shipped in v2.0.0).
+- **SwiftBar plugin** — one self-contained script, easy to audit in a sitting and trivial to fork. Its audience (Claude Code / Codex developers) already lives in the terminal, so `brew install swiftbar` is no barrier.
 
 ## Contributing
 

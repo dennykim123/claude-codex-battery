@@ -1,0 +1,4 @@
+# 빌드 산출물 — 배포는 GitHub Releases로 (zip은 repo에 넣지 않음)
+ClaudeCodexBattery*.app/
+ClaudeCodexBattery
+*.zip
