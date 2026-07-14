@@ -54,6 +54,7 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
 class AppDelegate: NSObject, NSApplicationDelegate {
   var statusItem: NSStatusItem!
   var timer: Timer?
+  var lastSnap: Snapshot? // 마지막 수집 결과 — 크기·테마 변경은 재수집 없이 이걸로 즉시 재렌더
 
   var loginItemEnabled: Bool {
     if #available(macOS 13.0, *) { return SMAppService.mainApp.status == .enabled }
@@ -65,7 +66,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     statusItem.button?.title = "…"
     // 다크/라이트 전환 시 배터리 색 갱신
     DistributedNotificationCenter.default().addObserver(
-      self, selector: #selector(refresh),
+      self, selector: #selector(rerender),
       name: NSNotification.Name("AppleInterfaceThemeChangedNotification"), object: nil)
     refresh()
     timer = Timer.scheduledTimer(withTimeInterval: REFRESH_SECONDS, repeats: true) { [weak self] _ in
@@ -97,7 +98,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  // 데이터 재수집 없이 마지막 스냅샷으로 즉시 다시 그림 (크기·테마 변경용)
+  @objc func rerender() {
+    if let s = lastSnap { render(s) } else { refresh() }
+  }
+
   func render(_ snap: Snapshot) {
+    lastSnap = snap
     let items = battItems(snap)
     if let btn = statusItem.button {
       btn.image = nil
@@ -134,14 +141,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private func setBattSize(_ s: String) {
     try? FileManager.default.createDirectory(atPath: STATE_DIR, withIntermediateDirectories: true)
     try? s.write(toFile: SIZE_FILE, atomically: true, encoding: .utf8)
-    refresh()
+    rerender() // 렌더만 다시 — 데이터는 그대로라 즉시 반영
   }
 
   @objc func toggleLoginItem() {
     guard #available(macOS 13.0, *) else { return }
     let svc = SMAppService.mainApp
     if svc.status == .enabled { try? svc.unregister() } else { try? svc.register() }
-    refresh()
+    rerender() // 체크마크만 갱신하면 됨 — 재수집 불필요
   }
 
   // ccusage 대시보드를 터미널로 — .command 파일 경유 (권한 프롬프트 없이 Terminal 실행)
