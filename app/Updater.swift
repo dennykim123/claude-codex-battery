@@ -34,9 +34,10 @@ func downloadAndInstallUpdate(version: String, progress: (String) -> Void) throw
   let newApp = tmp + "/ClaudeCodexBattery.app"
 
   progress("서명 검증 중…")
-  let requirement = "anchor apple generic and certificate leaf[subject.OU] = \"\(TEAM_ID)\""
+  // 요구식은 "=" 접두사로 인라인 지정 (없으면 codesign이 파일 경로로 해석)
+  let requirement = "=anchor apple generic and certificate leaf[subject.OU] = \"\(TEAM_ID)\""
   guard runCmd("/usr/bin/codesign",
-               ["--verify", "--strict", "--test-requirement=\(requirement)", newApp],
+               ["--verify", "--strict", "--test-requirement", requirement, newApp],
                timeout: 30) != nil else { throw UpdateError.verify }
 
   progress("설치 중…")
