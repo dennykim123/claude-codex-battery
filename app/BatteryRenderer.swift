@@ -109,6 +109,17 @@ private func heatRemain(_ r: Double, dark: Bool) -> RGB {
   return dark ? (48, 209, 88) : (52, 199, 89) // systemGreen
 }
 
+// 잔량 100% = 황금 배터리 (경고 노랑과 구분되는 투톤 골드)
+func isGolden(_ remain: Double?) -> Bool { (remain ?? 0) >= 99.5 }
+private func goldBase(_ dark: Bool) -> RGB { dark ? (255, 184, 0) : (255, 170, 0) }
+private func goldHi(_ dark: Bool) -> RGB { dark ? (255, 226, 110) : (255, 214, 90) }
+
+// 글린트(광택) 스윕 전체 구간 — 대각선이 캡슐을 완전히 가로지르는 길이
+func batteryGlintSpan() -> Int {
+  let p = currentBattSize() == "small" ? PRESET_SMALL : PRESET_BIG
+  return p.bw + p.bh
+}
+
 // altCol/boundaryX 지정 시: 픽셀 x가 채움 경계 왼쪽이면 altCol(밝은 채움 위 대비), 오른쪽이면 col
 @discardableResult
 private func drawNum(_ cv: Canvas, _ p: Preset, _ x: Int, _ y: Int, _ str: String,
@@ -132,8 +143,9 @@ private func drawNum(_ cv: Canvas, _ p: Preset, _ x: Int, _ y: Int, _ str: Strin
 private func numW(_ p: Preset, _ s: String) -> Int { s.reduce(0) { $0 + p.adv($1) } - 1 }
 
 // 캡슐 하나: 테두리 + 잔량 채움 + 안에 잔량 숫자 (100 포함, 항상 표시)
+// 100%는 투톤 골드, glintX 지정 시 골드 캡슐 위로 대각선 광택 스윕
 private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
-                         _ remain: Double?, _ ink: RGB, _ dark: Bool) {
+                         _ remain: Double?, _ ink: RGB, _ dark: Bool, _ glintX: Int?) {
   let by = midY - p.bh / 2
   cv.stroke(x, by, p.bw, p.bh, ink)
   cv.rect(x + p.bw, by + 3, 2, p.bh - 6, ink) // 단자
@@ -141,7 +153,24 @@ private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
   let innerW = p.bw - 4
   let v = max(0, min(100, remain))
   let fw = Int((v / 100 * Double(innerW)).rounded())
-  if fw > 0 { cv.rect(x + 2, by + 2, fw, p.bh - 4, heatRemain(remain, dark: dark)) }
+  let golden = isGolden(remain)
+  if fw > 0 {
+    if golden {
+      cv.rect(x + 2, by + 2, fw, p.bh - 4, goldBase(dark))
+      cv.rect(x + 2, by + 2, fw, 2, goldHi(dark)) // 상단 하이라이트
+    } else {
+      cv.rect(x + 2, by + 2, fw, p.bh - 4, heatRemain(remain, dark: dark))
+    }
+  }
+  if golden, let g = glintX {
+    for j in 0 ..< (p.bh - 4) {
+      let gx = x + 2 + g - j // 대각선 (좌하향)
+      if gx >= x + 2, gx < x + 2 + fw {
+        cv.set(gx, by + 2 + j, (255, 255, 240))
+        if gx + 1 < x + 2 + fw { cv.set(gx + 1, by + 2 + j, (255, 240, 170)) }
+      }
+    }
+  }
   let s = String(Int(v.rounded()))
   let tx = x + (p.bw - numW(p, s)) / 2
   // 채움(밝은 system color) 위 픽셀은 어두운 숫자, 빈 배경 위는 ink → 어디서나 대비 확보
@@ -149,7 +178,7 @@ private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
 }
 
 // 캡슐 N개 + 그룹 라벨(C/X) → NSImage (2x 픽셀, 표시 크기는 호출부에서 배율로 조정)
-func renderBatteryImage(dark: Bool, items: [BattItem]) -> NSImage? {
+func renderBatteryImage(dark: Bool, items: [BattItem], glintX: Int? = nil) -> NSImage? {
   let p = currentBattSize() == "small" ? PRESET_SMALL : PRESET_BIG
   let ink: RGB = dark ? (235, 235, 235) : (45, 45, 45)
   // 폭 계산 (그룹 라벨 포함)
@@ -176,7 +205,7 @@ func renderBatteryImage(dark: Bool, items: [BattItem]) -> NSImage? {
       x += numW(p, String(g)) + p.lblgap
       pg = g
     } else { x += p.gap }
-    drawCapsule(cv, p, x, midY, item.remain, ink, dark)
+    drawCapsule(cv, p, x, midY, item.remain, ink, dark, glintX)
     x += p.capw
   }
   guard let provider = CGDataProvider(data: Data(cv.buf) as CFData),

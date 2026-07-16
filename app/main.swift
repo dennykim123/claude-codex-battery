@@ -48,7 +48,40 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
     let remain: Double = cr.unlimited ? 100 : (cr.hasCredits && (cr.balance ?? 0) > 0 ? 100 : 0)
     items.append(BattItem(label: "X", remain: remain))
   }
+  // 골든 배터리 시각 테스트용 (개발 전용)
+  if ProcessInfo.processInfo.environment["CCB_GOLD_TEST"] != nil {
+    return items.map { BattItem(label: $0.label, remain: $0.remain == nil ? nil : 100) }
+  }
   return items
+}
+
+// 시작 시퀀스: 왼쪽 배터리부터 순서대로 0 → 실제 잔량으로 차오름 (숫자도 카운트업)
+func introFrames(items: [BattItem], dark: Bool) -> [NSImage] {
+  var out: [NSImage] = []
+  let steps = 4
+  for i in 0 ..< items.count {
+    for s in 1 ... steps {
+      let t = Double(s) / Double(steps)
+      let frame = items.enumerated().map { j, it -> BattItem in
+        let r: Double? = j < i ? it.remain
+          : j == i ? it.remain.map { $0 * t }
+          : it.remain == nil ? nil : 0
+        return BattItem(label: it.label, remain: r)
+      }
+      if let img = renderBatteryImage(dark: dark, items: frame) { out.append(img) }
+    }
+  }
+  return out
+}
+
+// 황금 배터리 광택 스윕 (골든 캡슐이 하나라도 있을 때)
+func glintFrames(items: [BattItem], dark: Bool) -> [NSImage] {
+  guard items.contains(where: { isGolden($0.remain) }) else { return [] }
+  var out: [NSImage] = []
+  for g in stride(from: 0, to: batteryGlintSpan() + 2, by: 2) {
+    if let img = renderBatteryImage(dark: dark, items: items, glintX: g) { out.append(img) }
+  }
+  return out
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -104,20 +137,57 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     if let s = lastSnap { render(s) } else { refresh() }
   }
 
+  // 픽셀 크기 기준으로 디스플레이 배율을 나눠 표시 (레티나 ÷2, 1x 모니터 ÷1) — 재적용에도 안전
+  func setButtonImage(_ img: NSImage) {
+    guard let btn = statusItem.button else { return }
+    let scale = btn.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    let rep = img.representations.first
+    let pw = CGFloat(rep?.pixelsWide ?? Int(img.size.width))
+    let ph = CGFloat(rep?.pixelsHigh ?? Int(img.size.height))
+    img.size = NSSize(width: pw / scale, height: ph / scale)
+    img.isTemplate = false
+    btn.title = ""
+    btn.image = img
+  }
+
+  // 프레임 시퀀스 재생 — 마지막 프레임에서 멈춤
+  private var animTimer: Timer?
+  func playFrames(_ frames: [NSImage], interval: TimeInterval) {
+    animTimer?.invalidate()
+    guard !frames.isEmpty else { return }
+    var i = 0
+    animTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] t in
+      guard let self = self, i < frames.count else { t.invalidate(); return }
+      self.setButtonImage(frames[i])
+      i += 1
+    }
+  }
+
+  private var introPlayed = false
+
   func render(_ snap: Snapshot) {
     lastSnap = snap
     let items = battItems(snap)
     if let btn = statusItem.button {
-      btn.image = nil
-      btn.title = ""
       let dark = btn.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-      if !items.isEmpty, let img = renderBatteryImage(dark: dark, items: items) {
-        // SwiftBar와 동일하게 디스플레이 배율로 나눔 (레티나 ÷2, 1x 모니터 ÷1)
-        let scale = btn.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        img.size = NSSize(width: img.size.width / scale, height: img.size.height / scale)
-        img.isTemplate = false
-        btn.image = img
+      if !items.isEmpty, let finalImg = renderBatteryImage(dark: dark, items: items) {
+        // 시작 시퀀스(최초 1회) + 황금 배터리 광택 스윕(있을 때마다) → 마지막은 실제 상태
+        var frames: [NSImage] = []
+        if !introPlayed {
+          introPlayed = true
+          frames += introFrames(items: items, dark: dark)
+        }
+        frames += glintFrames(items: items, dark: dark)
+        if frames.isEmpty {
+          setButtonImage(finalImg)
+        } else {
+          frames.append(finalImg)
+          // CCB_ANIM_INTERVAL: 프레임 간격 재정의 (검증·데모용)
+          let interval = ProcessInfo.processInfo.environment["CCB_ANIM_INTERVAL"].flatMap(Double.init) ?? 0.045
+          playFrames(frames, interval: interval)
+        }
       } else {
+        btn.image = nil
         btn.title = "🔋 —"
       }
     }
@@ -200,6 +270,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f)
     NSWorkspace.shared.open(URL(fileURLWithPath: f))
   }
+}
+
+// ── --render-glint <path>: 글린트 중간 프레임을 PNG로 저장 (렌더 검증용) ──
+if let idx = CommandLine.arguments.firstIndex(of: "--render-glint"), CommandLine.arguments.count > idx + 1 {
+  let items = [BattItem(label: "C5", remain: 100), BattItem(label: "CW", remain: 100),
+               BattItem(label: "X5", remain: 100)]
+  if let img = renderBatteryImage(dark: true, items: items, glintX: 12),
+     let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+     let png = rep.representation(using: .png, properties: [:]) {
+    try? png.write(to: URL(fileURLWithPath: CommandLine.arguments[idx + 1]))
+    print("saved")
+  }
+  exit(0)
 }
 
 // ── --self-update: 최신 버전 확인 후 즉시 설치 (헤드리스 검증·수동 업데이트용) ──
