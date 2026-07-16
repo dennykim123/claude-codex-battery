@@ -67,6 +67,11 @@ Colors follow a traffic-light scale: green ≥ 50 % left, amber < 50 %, red < 20
 
 ### Option 1 — Native app (no SwiftBar, no bun)
 
+<p align="center">
+  <img src="docs/app-icon.png" alt="App icon" width="96">&nbsp;&nbsp;&nbsp;
+  <img src="docs/app-dropdown.png" alt="App dropdown" width="380">
+</p>
+
 Download `ClaudeCodexBattery-vX.Y.Z.zip` from [**Releases**](https://github.com/dennykim123/claude-codex-battery/releases), unzip, drag `ClaudeCodexBattery.app` into `/Applications`, and open it. That's it — the app is **signed & notarized**, so it runs with a double-click, and on first launch it offers to **start at login**.
 
 It's a native Swift port of the same widget: identical battery rendering, identical dropdown, same privacy model ([see Privacy](#privacy--security) — your tokens go only to the two usage endpoints). `ccusage` remains optional for the cost breakdown. Source lives in [`app/`](app/) — `./build.sh` for a local ad-hoc build, `./release.sh` for the notarized release.

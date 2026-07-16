@@ -122,12 +122,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
     statusItem.menu = buildMenu(snap, swiftBarDup: swiftBarDuplicate(), target: self)
+    // --pop-menu: 첫 렌더 직후 메뉴를 스스로 펼침 (스크린샷·검증용 — 보조 접근 불필요)
+    if CommandLine.arguments.contains("--pop-menu"), !menuPopped {
+      menuPopped = true
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        guard let self = self, let btn = self.statusItem.button, let win = btn.window,
+              let menu = self.statusItem.menu else { return }
+        _ = (btn, win)
+        NSApp.activate(ignoringOtherApps: true)
+        // 주 디스플레이(원점 0,0) 메뉴바 아래 고정 좌표에 펼침 — 멀티 모니터에서도 캡처 위치 고정
+        let screen = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens[0]
+        let pt = NSPoint(x: screen.frame.midX, y: screen.frame.maxY - 28)
+        FileHandle.standardError.write(Data("popup: at \(pt)\n".utf8))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+          menu.popUp(positioning: nil, at: pt, in: nil)
+        }
+      }
+      return
+    }
     // 온보딩은 첫 렌더가 화면에 나간 뒤에 — 모달이 데이터 표시를 막지 않도록
     if !promptShown {
       promptShown = true
       DispatchQueue.main.async { [weak self] in self?.firstRunAutoStartPrompt() }
     }
   }
+
+  private var menuPopped = false
 
   private var promptShown = false
 
