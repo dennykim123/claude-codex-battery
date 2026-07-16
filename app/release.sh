@@ -31,7 +31,21 @@ echo "📎 공증 티켓 스테이플…"
 xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 
-echo "🗜  배포용 zip 생성…"
+echo "🗜  배포용 zip 생성… (앱 내 자동 업데이트가 이 zip을 받음)"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
-echo "✅ 완료: $(pwd)/$ZIP (Gatekeeper 통과 — 더블클릭 실행 가능)"
+
+echo "💿 DMG 생성… (사람용 — 열어서 Applications로 드래그)"
+DMG="ClaudeCodexBattery-v${VERSION}.dmg"
+STAGE=$(mktemp -d)
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+rm -f "$DMG"
+hdiutil create -volname "Claude Codex Battery" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+rm -rf "$STAGE"
+codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+echo "📤 DMG 공증 (완료까지 대기)…"
+xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
+xcrun stapler staple "$DMG"
+
+echo "✅ 완료: $(pwd)/$ZIP + $(pwd)/$DMG (둘 다 Gatekeeper 통과)"
