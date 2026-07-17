@@ -87,6 +87,7 @@ func glintFrames(items: [BattItem], dark: Bool) -> [NSImage] {
 class AppDelegate: NSObject, NSApplicationDelegate {
   var statusItem: NSStatusItem!
   var timer: Timer?
+  var glintTimer: Timer?
   var lastSnap: Snapshot? // 마지막 수집 결과 — 크기·테마 변경은 재수집 없이 이걸로 즉시 재렌더
 
   var loginItemEnabled: Bool {
@@ -105,6 +106,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     timer = Timer.scheduledTimer(withTimeInterval: REFRESH_SECONDS, repeats: true) { [weak self] _ in
       self?.refresh()
     }
+    // 황금 배터리 광택은 데이터 갱신과 별개로 30초마다 (재수집 없이 캐시 상태로 재생)
+    let glintEvery = ProcessInfo.processInfo.environment["CCB_GLINT_SECONDS"].flatMap(Double.init) ?? 30.0
+    glintTimer = Timer.scheduledTimer(withTimeInterval: glintEvery, repeats: true) { [weak self] _ in
+      self?.playGoldenGlint()
+    }
+  }
+
+  // 캐시된 스냅샷 기준, 골든 배터리가 있으면 광택 스윕 한 번 재생
+  func playGoldenGlint() {
+    if ProcessInfo.processInfo.environment["CCB_DEBUG"] != nil {
+      FileHandle.standardError.write(Data("glint tick: lastSnap=\(lastSnap != nil)\n".utf8))
+    }
+    guard let snap = lastSnap, let btn = statusItem.button else { return }
+    let items = battItems(snap)
+    let dark = btn.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    var frames = glintFrames(items: items, dark: dark)
+    guard !frames.isEmpty, let final = renderBatteryImage(dark: dark, items: items) else { return }
+    frames.append(final)
+    let interval = ProcessInfo.processInfo.environment["CCB_ANIM_INTERVAL"].flatMap(Double.init) ?? 0.045
+    playFrames(frames, interval: interval)
   }
 
   // 첫 실행에만: 로그인 시 자동 시작 등록 제안 (RunCat식 온보딩)
