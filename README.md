@@ -31,15 +31,14 @@ Ships two ways: a **notarized native app** (double-click install, zero prerequis
 Click the widget for a dropdown with, per limit:
 
 ```
-Claude Code
-  5h remaining   ▕██████████████░░░░░░▏ 70%  (used 30%)  · resets 3h 18m
-  weekly         ▕██████▋░░░░░░░░░░░░░▏ 33%  (used 67%)  · resets 3d 21h
-  Fable          ▕████░░░░░░░░░░░░░░░░▏ 26%  (used 74%)  · resets 3d 21h
-  today by model ▕████████████▏ Fable $75 · Opus $46 · Sonnet $5 …
+Claude Code · % left
+  5h    ▕█████████████████▍░░▏ 87%  ·  resets 2h 36m
+  week  ▕█████████████▍░░░░░░▏ 67%  ·  resets 4d 2h
+  Fable ▕████████▎░░░░░░░░░░░▏ 41%  ·  resets 4d 2h
+  today by model · $55 total ▸
 
-Codex · prolite
-  5h remaining   ▕████████████████████▏ 100% (used 0%)
-  weekly         ▕████████████████▋░░░▏ 83%  (used 17%)
+Codex · prolite · % left
+  week  ▕████████████████████▏ 100% ·  resets 7d 0h
 ```
 
 Colors follow a traffic-light scale: green ≥ 50 % left, amber < 50 %, red < 20 %.
