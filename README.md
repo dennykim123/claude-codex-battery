@@ -75,6 +75,8 @@ Download `ClaudeCodexBattery-vX.Y.Z.dmg` from [**Releases**](https://github.com/
 
 It's a native Swift port of the same widget: identical battery rendering, identical dropdown, same privacy model ([see Privacy](#privacy--security) — your tokens go only to the two usage endpoints). `ccusage` remains optional for the cost breakdown. Source lives in [`app/`](app/) — `./build.sh` for a local ad-hoc build, `./release.sh` for the notarized release.
 
+**UI languages:** English · 한국어 · 日本語 · 简体中文 · 繁體中文 · Español — follows your system language, or pick one in **Settings → Language** (the SwiftBar plugin follows the same choice).
+
 ### Option 2 — SwiftBar plugin (single auditable script)
 
 ```bash

@@ -14,12 +14,6 @@ func findBin(_ name: String) -> String? {
 // Opt-out switch for live queries (same as the widget: touch ~/.claude/swiftbar/.no-live)
 func liveDisabled() -> Bool { FileManager.default.fileExists(atPath: "\(STATE_DIR)/.no-live") }
 
-// UI language: Korean if the system language is Korean, otherwise English (CCB_LANG=ko|en can force it for testing)
-let UI_KO: Bool = {
-  if let f = ProcessInfo.processInfo.environment["CCB_LANG"] { return f == "ko" }
-  return Locale.preferredLanguages.first?.hasPrefix("ko") ?? false
-}()
-func L(_ ko: String, _ en: String) -> String { UI_KO ? ko : en }
 
 func fmtDur(_ secs: Int) -> String {
   if secs <= 0 { return "0m" }

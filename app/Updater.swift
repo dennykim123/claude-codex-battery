@@ -9,10 +9,10 @@ enum UpdateError: Error, CustomStringConvertible {
   case download, unzip, verify, install
   var description: String {
     switch self {
-    case .download: return L("다운로드 실패", "download failed")
-    case .unzip: return L("압축 해제 실패", "unzip failed")
-    case .verify: return L("서명 검증 실패", "signature verification failed")
-    case .install: return L("설치 실패", "install failed")
+    case .download: return tr("download failed")
+    case .unzip: return tr("unzip failed")
+    case .verify: return tr("signature verification failed")
+    case .install: return tr("install failed")
     }
   }
 }
@@ -24,23 +24,23 @@ func downloadAndInstallUpdate(version: String, progress: (String) -> Void) throw
   try FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(atPath: tmp) }
 
-  progress(L("다운로드 중…", "downloading…"))
+  progress(tr("downloading…"))
   guard let data = httpGet(url, headers: [:], timeout: 60), !data.isEmpty else { throw UpdateError.download }
   let zipPath = tmp + "/update.zip"
   try data.write(to: URL(fileURLWithPath: zipPath))
 
-  progress(L("압축 해제 중…", "unzipping…"))
+  progress(tr("unzipping…"))
   guard runCmd("/usr/bin/ditto", ["-x", "-k", zipPath, tmp], timeout: 30) != nil else { throw UpdateError.unzip }
   let newApp = tmp + "/ClaudeCodexBattery.app"
 
-  progress(L("서명 검증 중…", "verifying signature…"))
+  progress(tr("verifying signature…"))
   // The requirement string uses an "=" prefix to specify it inline (without it, codesign treats it as a file path)
   let requirement = "=anchor apple generic and certificate leaf[subject.OU] = \"\(TEAM_ID)\""
   guard runCmd("/usr/bin/codesign",
                ["--verify", "--strict", "--test-requirement", requirement, newApp],
                timeout: 30) != nil else { throw UpdateError.verify }
 
-  progress(L("설치 중…", "installing…"))
+  progress(tr("installing…"))
   let target = Bundle.main.bundlePath // Replace the currently running bundle's location in place
   let backup = tmp + "/previous.app"
   try FileManager.default.moveItem(atPath: target, toPath: backup)

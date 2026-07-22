@@ -19,21 +19,239 @@ import { homedir } from "node:os";
 import zlib from "node:zlib";
 
 const HOME = homedir();
-// UI language: Korean on Korean-language macOS, English otherwise (CCB_LANG=ko|en to force)
-const UI_KO = (() => {
-  if (process.env.CCB_LANG) return process.env.CCB_LANG === "ko";
+// ── UI language: en (default) · ko · ja · zh-Hans · zh-Hant · es ─────────────
+// Resolution: CCB_LANG env → ~/.claude/swiftbar/.lang (written by the app's
+// Settings → Language) → system language → English.
+const SUPPORTED_LANGS = ["en", "ko", "ja", "zh-Hans", "zh-Hant", "es"];
+const LANG_FILE_PATH = `${HOME}/.claude/swiftbar/.lang`;
+function normLang(raw) {
+  const l = String(raw).toLowerCase();
+  if (l.startsWith("ko")) return "ko";
+  if (l.startsWith("ja")) return "ja";
+  if (l.startsWith("es")) return "es";
+  if (l.startsWith("zh")) {
+    if (
+      l.includes("hant") ||
+      l.includes("-tw") ||
+      l.includes("-hk") ||
+      l.includes("-mo")
+    )
+      return "zh-Hant";
+    return "zh-Hans";
+  }
+  if (l.startsWith("en")) return "en";
+  return raw;
+}
+const UI_LANG = (() => {
+  if (process.env.CCB_LANG) {
+    const n = normLang(process.env.CCB_LANG);
+    if (SUPPORTED_LANGS.includes(n)) return n;
+  }
+  try {
+    const n = normLang(readFileSync(LANG_FILE_PATH, "utf8").trim());
+    if (SUPPORTED_LANGS.includes(n)) return n;
+  } catch {}
   try {
     const out = execSync("defaults read -g AppleLanguages 2>/dev/null", {
       encoding: "utf8",
       timeout: 3000,
     });
-    const m = out.match(/"\s*([a-z]{2})/);
-    return m?.[1] === "ko";
-  } catch {
-    return false;
-  }
+    const m = out.match(/"\s*([A-Za-z-]+)/);
+    if (m) {
+      const n = normLang(m[1]);
+      if (SUPPORTED_LANGS.includes(n)) return n;
+    }
+  } catch {}
+  return "en";
 })();
-const L = (ko, en) => (UI_KO ? ko : en);
+// Third-language table, keyed by the English string ({0}/{1} are placeholders).
+// Korean lives at the call sites (first argument of L/tf); English is the key.
+const TR3 = {
+  "% left": {
+    ja: "残り%",
+    "zh-Hans": "剩余 %",
+    "zh-Hant": "剩餘 %",
+    es: "% restante",
+  },
+  "C5·CW·CF = Claude 5h·weekly·Fable": {
+    ja: "C5·CW·CF = Claude 5時間·週間·Fable",
+    "zh-Hans": "C5·CW·CF = Claude 5小时·每周·Fable",
+    "zh-Hant": "C5·CW·CF = Claude 5小時·每週·Fable",
+    es: "C5·CW·CF = Claude 5h·semanal·Fable",
+  },
+  "X5·XW = Codex 5h·weekly": {
+    ja: "X5·XW = Codex 5時間·週間",
+    "zh-Hans": "X5·XW = Codex 5小时·每周",
+    "zh-Hant": "X5·XW = Codex 5小時·每週",
+    es: "X5·XW = Codex 5h·semanal",
+  },
+  "X = Codex credits": {
+    ja: "X = Codexクレジット",
+    "zh-Hans": "X = Codex 额度",
+    "zh-Hant": "X = Codex 額度",
+    es: "X = créditos de Codex",
+  },
+  "5h left  ": {
+    ja: "5時間残り ",
+    "zh-Hans": "5小时剩余",
+    "zh-Hant": "5小時剩餘",
+    es: "5h rest.  ",
+  },
+  "wk left  ": {
+    ja: "週間残り  ",
+    "zh-Hans": "每周剩余 ",
+    "zh-Hant": "每週剩餘 ",
+    es: "sem rest. ",
+  },
+  left: { ja: "残り", "zh-Hans": "剩余", "zh-Hant": "剩餘", es: "rest." },
+  used: { ja: "使用", "zh-Hans": "已用", "zh-Hant": "已用", es: "usado" },
+  reset: {
+    ja: "リセット済み",
+    "zh-Hans": "已重置",
+    "zh-Hant": "已重置",
+    es: "reiniciado",
+  },
+  resets: {
+    ja: "リセット",
+    "zh-Hans": "重置",
+    "zh-Hant": "重置",
+    es: "reinicia",
+  },
+  "live (Anthropic usage API — all devices combined)": {
+    ja: "ライブ (Anthropic usage API — 全デバイス合算)",
+    "zh-Hans": "实时（Anthropic usage API — 所有设备合计）",
+    "zh-Hant": "即時（Anthropic usage API — 所有裝置合計）",
+    es: "en vivo (Anthropic usage API — todos los dispositivos)",
+  },
+  "live (ChatGPT usage API — all devices combined)": {
+    ja: "ライブ (ChatGPT usage API — 全デバイス合算)",
+    "zh-Hans": "实时（ChatGPT usage API — 所有设备合计）",
+    "zh-Hant": "即時（ChatGPT usage API — 所有裝置合計）",
+    es: "en vivo (ChatGPT usage API — todos los dispositivos)",
+  },
+  "cached {0} ago (fallback — check Claude Code login/network)": {
+    ja: "{0}前のキャッシュ (フォールバック — Claude Codeのログイン/ネットワークを確認)",
+    "zh-Hans": "{0} 前的缓存（回退 — 请检查 Claude Code 登录/网络）",
+    "zh-Hant": "{0} 前的快取（備援 — 請檢查 Claude Code 登入/網路）",
+    es: "caché de hace {0} (respaldo — revisa sesión/red de Claude Code)",
+  },
+  "live query failed — check login/network (local log from {0} ago)": {
+    ja: "ライブ取得失敗 — ログイン/ネットワークを確認 ({0}前のローカルログ)",
+    "zh-Hans": "实时查询失败 — 请检查登录/网络（{0} 前的本地日志）",
+    "zh-Hant": "即時查詢失敗 — 請檢查登入/網路（{0} 前的本機日誌）",
+    es: "consulta en vivo fallida — revisa sesión/red (registro local de hace {0})",
+  },
+  "block cost": {
+    ja: "ブロック費用",
+    "zh-Hans": "时段费用",
+    "zh-Hant": "時段費用",
+    es: "costo del bloque",
+  },
+  tokens: {
+    ja: "tokens",
+    "zh-Hans": "tokens",
+    "zh-Hant": "tokens",
+    es: "tokens",
+  },
+  "today by model": {
+    ja: "今日のモデル別",
+    "zh-Hans": "今日按模型",
+    "zh-Hant": "今日按模型",
+    es: "hoy por modelo",
+  },
+  total: { ja: "計", "zh-Hans": "共", "zh-Hant": "共", es: "total" },
+  "credits  unlimited": {
+    ja: "クレジット 無制限",
+    "zh-Hans": "额度 无限",
+    "zh-Hant": "額度 無限",
+    es: "créditos  ilimitados",
+  },
+  "credits  exhausted · limit reached (0)": {
+    ja: "クレジット切れ · 上限到達 (0)",
+    "zh-Hans": "额度用尽 · 已达上限 (0)",
+    "zh-Hant": "額度用盡 · 已達上限 (0)",
+    es: "créditos agotados · límite alcanzado (0)",
+  },
+  "buy credits in Codex settings or wait for reset": {
+    ja: "Codex設定でクレジットを購入するかリセットを待つ",
+    "zh-Hans": "在 Codex 设置中购买额度或等待重置",
+    "zh-Hant": "在 Codex 設定中購買額度或等待重置",
+    es: "compra créditos en los ajustes de Codex o espera el reinicio",
+  },
+  "credits  balance": {
+    ja: "クレジット残高",
+    "zh-Hans": "额度余额",
+    "zh-Hant": "額度餘額",
+    es: "créditos  saldo",
+  },
+  "Run Claude Code or Codex and usage will appear here": {
+    ja: "Claude CodeまたはCodexを使うと使用量が表示されます",
+    "zh-Hans": "运行 Claude Code 或 Codex 后将显示用量",
+    "zh-Hant": "執行 Claude Code 或 Codex 後將顯示用量",
+    es: "Usa Claude Code o Codex y el consumo aparecerá aquí",
+  },
+  "Update to v{0} (current v{1})": {
+    ja: "v{0}へアップデート (現在 v{1})",
+    "zh-Hans": "更新到 v{0}（当前 v{1}）",
+    "zh-Hant": "更新到 v{0}（目前 v{1}）",
+    es: "Actualizar a v{0} (actual v{1})",
+  },
+  "Update now — replace with latest from GitHub (current v{0})": {
+    ja: "今すぐ更新 — GitHubの最新版に置き換え (現在 v{0})",
+    "zh-Hans": "立即更新 — 替换为 GitHub 最新版（当前 v{0}）",
+    "zh-Hant": "立即更新 — 替換為 GitHub 最新版（目前 v{0}）",
+    es: "Actualizar ahora — reemplazar con lo último de GitHub (actual v{0})",
+  },
+  "Refresh now": {
+    ja: "今すぐ更新",
+    "zh-Hans": "立即刷新",
+    "zh-Hant": "立即重新整理",
+    es: "Actualizar ahora",
+  },
+  "Open ccusage dashboard": {
+    ja: "ccusageダッシュボードを開く",
+    "zh-Hans": "打开 ccusage 面板",
+    "zh-Hant": "開啟 ccusage 面板",
+    es: "Abrir panel de ccusage",
+  },
+  "battery size": {
+    ja: "バッテリーサイズ",
+    "zh-Hans": "电池大小",
+    "zh-Hant": "電池大小",
+    es: "tamaño de batería",
+  },
+  "big (default)": {
+    ja: "大 (標準)",
+    "zh-Hans": "大（默认）",
+    "zh-Hant": "大（預設）",
+    es: "grande (predet.)",
+  },
+  small: { ja: "小", "zh-Hans": "小", "zh-Hant": "小", es: "pequeño" },
+  big: { ja: "大", "zh-Hans": "大", "zh-Hant": "大", es: "grande" },
+  "click for": {
+    ja: "クリックで",
+    "zh-Hans": "点击切换为",
+    "zh-Hant": "點擊切換為",
+    es: "clic para",
+  },
+  "Disable widget (re-enable in SwiftBar settings)": {
+    ja: "ウィジェットを無効化 (SwiftBar設定で再有効化)",
+    "zh-Hans": "停用小组件（在 SwiftBar 设置中重新启用）",
+    "zh-Hant": "停用小工具（在 SwiftBar 設定中重新啟用）",
+    es: "Desactivar widget (reactivar en ajustes de SwiftBar)",
+  },
+};
+// L: plain string — ko from the call site, en as-is, others looked up by the English key
+const L = (ko, en) =>
+  UI_LANG === "ko" ? ko : UI_LANG === "en" ? en : (TR3[en]?.[UI_LANG] ?? en);
+// tf: templated string with {0}/{1} placeholders
+const tf = (ko, en, ...args) => {
+  let s = L(ko, en);
+  args.forEach((a, i) => {
+    s = s.replaceAll(`{${i}}`, a);
+  });
+  return s;
+};
 
 // Locate binaries (paths differ per machine — portability)
 function findBin(name, extra = []) {
@@ -61,7 +279,7 @@ const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── Auto-update (notification + one click) ──
-const VERSION = "2.3.2";
+const VERSION = "2.4.0";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -836,7 +1054,7 @@ if (hasClaude) {
     out.push(
       cusage.live
         ? `${L("라이브 (Anthropic usage API — 전 디바이스 합산)", "live (Anthropic usage API — all devices combined)")} | size=11 color=#8b949e`
-        : `${L(`측정 ${fmtDur(now - cusage.measuredAt)} 전 (캐시 폴백 — Claude Code 로그인·네트워크 확인)`, `cached ${fmtDur(now - cusage.measuredAt)} ago (fallback — check Claude Code login/network)`)} | size=11 color=#d29922`,
+        : `${tf("측정 {0} 전 (캐시 폴백 — Claude Code 로그인·네트워크 확인)", "cached {0} ago (fallback — check Claude Code login/network)", fmtDur(now - cusage.measuredAt))} | size=11 color=#d29922`,
     );
   }
   if (claude && !claude.error) {
@@ -916,7 +1134,7 @@ if (hasCodex) {
   out.push(
     codex.live
       ? `${L("라이브 (ChatGPT usage API — 전 디바이스 합산)", "live (ChatGPT usage API — all devices combined)")} | size=11 color=#8b949e`
-      : `⚠ ${L(`라이브 조회 실패 — 로그인·네트워크 확인 (${fmtDur(age)} 전 로컬 로그값)`, `live query failed — check login/network (local log from ${fmtDur(age)} ago)`)} | size=11 color=#d29922`,
+      : `⚠ ${tf("라이브 조회 실패 — 로그인·네트워크 확인 ({0} 전 로컬 로그값)", "live query failed — check login/network (local log from {0} ago)", fmtDur(age))} | size=11 color=#d29922`,
   );
   out.push("---");
 }
@@ -933,11 +1151,11 @@ if (!hasClaude && !hasCodex) {
 const upd = getUpdateInfo();
 if (upd.hasUpdate) {
   out.push(
-    `🆕 ${L(`v${upd.latest} 업데이트 (현재 v${VERSION})`, `Update to v${upd.latest} (current v${VERSION})`)} | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true color=#28963f`,
+    `🆕 ${tf("v{0} 업데이트 (현재 v{1})", "Update to v{0} (current v{1})", upd.latest, VERSION)} | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true color=#28963f`,
   );
 } else {
   out.push(
-    `⬆️ ${L(`지금 업데이트 — GitHub 최신으로 교체 (현재 v${VERSION})`, `Update now — replace with latest from GitHub (current v${VERSION})`)} | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true`,
+    `⬆️ ${tf("지금 업데이트 — GitHub 최신으로 교체 (현재 v{0})", "Update now — replace with latest from GitHub (current v{0})", VERSION)} | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true`,
   );
 }
 out.push(`🔄 ${L("지금 새로고침", "Refresh now")} | refresh=true`);

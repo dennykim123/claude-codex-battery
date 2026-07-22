@@ -135,11 +135,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
           SMAppService.mainApp.status != .enabled else { return }
     UserDefaults.standard.set(true, forKey: "askedAutoStart")
     let a = NSAlert()
-    a.messageText = L("로그인 시 자동으로 시작할까요?", "Start automatically at login?")
-    a.informativeText = L("맥을 켤 때마다 메뉴바에 사용량 배터리가 자동으로 표시됩니다. 나중에 메뉴에서 언제든 바꿀 수 있습니다.",
-                          "The usage battery will appear in your menu bar every time you start your Mac. You can change this anytime from the menu.")
-    a.addButton(withTitle: L("자동 시작", "Start at Login"))
-    a.addButton(withTitle: L("나중에", "Later"))
+    a.messageText = tr("Start automatically at login?")
+    a.informativeText = tr("The usage battery will appear in your menu bar every time you start your Mac. You can change this anytime from the menu.")
+    a.addButton(withTitle: tr("Start at Login"))
+    a.addButton(withTitle: tr("Later"))
     NSApp.activate(ignoringOtherApps: true)
     if a.runModal() == .alertFirstButtonReturn {
       try? SMAppService.mainApp.register()
@@ -248,6 +247,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  // Language choice: "auto" or a code from SUPPORTED_LANGS; also mirrored to
+  // ~/.claude/swiftbar/.lang so the SwiftBar widget follows the same choice
+  @objc func setLang(_ sender: NSMenuItem) {
+    guard let code = sender.representedObject as? String else { return }
+    UserDefaults.standard.set(code, forKey: "uiLang")
+    try? FileManager.default.createDirectory(atPath: STATE_DIR, withIntermediateDirectories: true)
+    if code == "auto" {
+      try? FileManager.default.removeItem(atPath: LANG_FILE)
+    } else {
+      try? code.write(toFile: LANG_FILE, atomically: true, encoding: .utf8)
+    }
+    UI_LANG = resolveLang()
+    rerender()
+  }
+
   @objc func setSizeBig() { setBattSize("big") }
   @objc func setSizeSmall() { setBattSize("small") }
   private func setBattSize(_ s: String) {
@@ -267,7 +281,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   @objc func selfUpdate(_ sender: NSMenuItem) {
     guard let v = sender.representedObject as? String else { return }
     statusItem.button?.image = nil
-    statusItem.button?.title = L("⬇︎ 업데이트…", "⬇︎ Updating…")
+    statusItem.button?.title = tr("⬇︎ Updating…")
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       do {
         try downloadAndInstallUpdate(version: v) { _ in }
