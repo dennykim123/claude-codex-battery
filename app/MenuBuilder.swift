@@ -1,11 +1,11 @@
-// 드롭다운 메뉴 구성 — macOS 시스템 메뉴 톤: 게이지는 본문, 설정류는 서브메뉴로.
-// 모든 UI 문자열은 L(ko, en) — 시스템 언어 기준 한/영 자동.
+// Dropdown menu construction — macOS system-menu tone: gauges live in the body, settings go in a submenu.
+// All UI strings use L(ko, en) — auto-switches Korean/English based on system language.
 import Cocoa
 
 private let GRAY = "#8b949e"
 private let WARN = "#d29922"
 
-// 한 번의 새로고침에서 수집한 전체 상태
+// Full state collected in a single refresh
 struct Snapshot {
   let now: Int
   let usage: ClaudeUsage?
@@ -32,7 +32,7 @@ private func row(_ menu: NSMenu, _ text: String, mono: Bool = false, size: CGFlo
   return item
 }
 
-// "5시간  ▕████████████░░░░░░░░▏  85%  ·  리셋 3h 57m" — 잔량 게이지 한 줄
+// "5h  ▕████████████░░░░░░░░▏  85%  ·  resets 3h 57m" — one remaining-usage gauge line
 private func gaugeRow(_ menu: NSMenu, _ label: String, pct: Double, resetText: String?) {
   let r = max(0, 100 - pct)
   var t = "\(label) ▕\(gaugeBar(r, 20))▏ \(Int(r.rounded()))%"
@@ -79,7 +79,7 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
                        b.cost, fmtTok(b.tokens), cph),
           mono: true, size: 11, color: GRAY)
     }
-    // 모델별 상세는 서브메뉴로 — 본문을 짧게 유지
+    // Per-model detail goes in a submenu — keeps the body short
     if let m = snap.models, !m.models.isEmpty {
       let sub = NSMenu()
       let maxCost = m.models[0].cost > 0 ? m.models[0].cost : 1
@@ -139,7 +139,7 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
   }
   row(menu, L("새로고침", "Refresh"), action: #selector(AppDelegate.refresh), target: target, key: "r")
 
-  // 설정 서브메뉴 — 크기·자동 시작·바로가기·버전
+  // Settings submenu — size, auto-start, shortcuts, version
   let settings = NSMenu()
   let sizeMenu = NSMenu()
   let size = currentBattSize()

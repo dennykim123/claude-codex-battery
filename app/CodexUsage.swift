@@ -1,10 +1,10 @@
-// Codex rate limit — ChatGPT usage 엔드포인트 직접 조회 (위젯 2 포팅)
-// 라이브(계정 단위, 전 디바이스 동일) 우선 → 실패 시 로컬 세션 로그 → 마지막 라이브 캐시.
+// Codex rate limit — queries the ChatGPT usage endpoint directly (ported from widget 2)
+// Prefers live data (account-level, same across all devices) → falls back to local session logs → last live cache.
 import Foundation
 
 struct CodexWindow {
   let usedPercent: Double
-  let resetsAt: Int? // epoch 초
+  let resetsAt: Int? // epoch seconds
 }
 
 struct CodexCredits {
@@ -18,13 +18,13 @@ struct CodexUsage {
   let live: Bool
   let limitId: String?
   let plan: String?
-  let primary: CodexWindow? // ~5시간 창
-  let secondary: CodexWindow? // ~주간 창
-  let credits: CodexCredits? // premium 소진형 (창이 전혀 없을 때만)
+  let primary: CodexWindow? // ~5-hour window
+  let secondary: CodexWindow? // ~weekly window
+  let credits: CodexCredits? // premium consumable-style (only when there's no window at all)
 }
 
 struct WindowState {
-  let pct: Double // 사용률 (리셋 지났으면 0)
+  let pct: Double // usage rate (0 once past the reset)
   let resetsIn: Int?
   let stale: Bool
 }
@@ -52,8 +52,8 @@ private func parseCredits(_ a: Any?) -> CodexCredits? {
                       balance: jn(cr["balance"]))
 }
 
-// 라이브: /backend-api/wham/usage GET → 응답 필드(primary_window/limit_window_seconds/reset_at)를
-// 세션 로그 형식으로 정규화. primary/secondary는 "그때 활성인 창"이라 창 길이로 슬롯 판별.
+// Live: GET /backend-api/wham/usage → normalizes the response fields (primary_window/limit_window_seconds/reset_at)
+// into the session-log format. primary/secondary are "whichever window is active at the time," so the slot is decided by window length.
 private func fetchCodexLive(now: Int) -> CodexUsage? {
   guard let c = readCodexToken() else { return nil }
   guard let raw = httpGet("https://chatgpt.com/backend-api/wham/usage",
@@ -68,8 +68,8 @@ private func fetchCodexLive(now: Int) -> CodexUsage? {
   for w0 in [rl?["primary_window"], rl?["secondary_window"]] {
     guard let w = jd(w0) else { continue }
     let secs = jn(w["limit_window_seconds"]) ?? 0
-    if secs > 0, secs <= 6 * 3600 { primary = parseWindow(w, resetKey: "reset_at") } // ~5시간
-    else { secondary = parseWindow(w, resetKey: "reset_at") } // ~주간(7일)
+    if secs > 0, secs <= 6 * 3600 { primary = parseWindow(w, resetKey: "reset_at") } // ~5 hours
+    else { secondary = parseWindow(w, resetKey: "reset_at") } // ~weekly (7 days)
   }
   let credits = (primary == nil && secondary == nil) ? parseCredits(d["credits"]) : nil
   if primary == nil, secondary == nil, credits == nil { return nil }
@@ -79,7 +79,7 @@ private func fetchCodexLive(now: Int) -> CodexUsage? {
   return result
 }
 
-// 캐시는 SwiftBar 위젯과 동일 JSON 형식으로 유지 (양쪽에서 서로 읽을 수 있게)
+// The cache is kept in the same JSON format as the SwiftBar widget (so either side can read it)
 private func saveCache(_ u: CodexUsage) {
   func winJSON(_ w: CodexWindow?) -> Any {
     guard let w = w else { return NSNull() }
@@ -98,7 +98,7 @@ private func saveCache(_ u: CodexUsage) {
   writeJSONFile(CODEX_CACHE, obj)
 }
 
-// 폴백 1: 가장 신선한 세션 로그(.jsonl)에서 rate_limits 스캔
+// Fallback 1: scan rate_limits from the freshest session log (.jsonl)
 private func codexFromSessions() -> CodexUsage? {
   guard FileManager.default.fileExists(atPath: CODEX_SESSIONS) else { return nil }
   var files: [(path: String, mtime: Int)] = []
@@ -127,7 +127,7 @@ private func codexFromSessions() -> CodexUsage? {
   return nil
 }
 
-// 폴백 2: 마지막 라이브 캐시
+// Fallback 2: last live cache
 private func codexFromCache() -> CodexUsage? {
   guard let c = jd(readJSONFile(CODEX_CACHE)) else { return nil }
   let primary = parseWindow(c["primary"], resetKey: "resets_at")

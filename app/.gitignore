@@ -1,4 +1,5 @@
-# 빌드 산출물 — 배포는 GitHub Releases로 (zip은 repo에 넣지 않음)
+# Build artifacts — distributed via GitHub Releases (zip is not committed to the repo)
 ClaudeCodexBattery*.app/
 ClaudeCodexBattery
 *.zip
+*.dmg

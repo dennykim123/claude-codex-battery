@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // <xbar.title>Claude & Codex Usage</xbar.title>
 // <xbar.version>v3.0</xbar.version>
-// <xbar.author>개발부스러기</xbar.author>
-// <xbar.desc>Claude Code 5시간 블록 + Codex rate limit을 메뉴바에 배터리 아이콘으로 상시 표시</xbar.desc>
-// SwiftBar 플러그인: 1분마다 갱신. 메뉴바=배터리 잔량 아이콘(자체 PNG), 클릭=상세 게이지.
+// <xbar.author>Denny Kim</xbar.author>
+// <xbar.desc>Shows remaining Claude Code 5h-block and Codex rate limits as battery icons in the menu bar</xbar.desc>
+// SwiftBar plugin, refreshes every 2 minutes. Menu bar = battery icons (self-rendered PNG), click = detailed gauges.
 
 import { execSync, spawn } from "node:child_process";
 import {
@@ -19,7 +19,23 @@ import { homedir } from "node:os";
 import zlib from "node:zlib";
 
 const HOME = homedir();
-// 바이너리 경로 자동 탐지 (환경별로 다름 — 이식성)
+// UI language: Korean on Korean-language macOS, English otherwise (CCB_LANG=ko|en to force)
+const UI_KO = (() => {
+  if (process.env.CCB_LANG) return process.env.CCB_LANG === "ko";
+  try {
+    const out = execSync("defaults read -g AppleLanguages 2>/dev/null", {
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    const m = out.match(/"\s*([a-z]{2})/);
+    return m?.[1] === "ko";
+  } catch {
+    return false;
+  }
+})();
+const L = (ko, en) => (UI_KO ? ko : en);
+
+// Locate binaries (paths differ per machine — portability)
 function findBin(name, extra = []) {
   const cands = [
     ...extra,
@@ -38,14 +54,14 @@ function findBin(name, extra = []) {
     }).trim();
     if (p) return p;
   } catch {}
-  return name; // 최후: PATH에 의존
+  return name; // last resort: rely on PATH
 }
 const CCUSAGE = findBin("ccusage");
 const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
-// ── 자동 업데이트 (알림 + 원클릭) ──
-const VERSION = "2.3.1";
+// ── Auto-update (notification + one click) ──
+const VERSION = "2.3.2";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -59,8 +75,8 @@ function cmpVer(a, b) {
   }
   return 0;
 }
-// 캐시된 최신 버전을 읽고, 24h+ 지났으면 백그라운드로 GitHub VERSION만 조용히 확인
-// (렌더를 막지 않음 — spawn+unref로 detached 실행)
+// Read the cached latest version; if 24h+ old, quietly check GitHub's VERSION file
+// in the background (doesn't block rendering — detached spawn + unref)
 function getUpdateInfo() {
   let cache = null;
   try {
@@ -83,7 +99,7 @@ function getUpdateInfo() {
   return { latest, hasUpdate: !!latest && cmpVer(latest, VERSION) > 0 };
 }
 
-// ══ 배터리 아이콘 PNG 렌더 (순수 JS, node:zlib만) ══════════
+// ══ Battery icon PNG renderer (pure JS, node:zlib only) ══════════
 const CRC = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -160,14 +176,14 @@ const _stroke = (cv, x, y, rw, rh, col) => {
     cv.set(x + rw - 1, y + j, col);
   }
 };
-// ── 크기 프리셋: big(기본) / small — 드롭다운 ↕ 행 또는 ~/.claude/swiftbar/.batt-size 로 전환 ──
+// ── Size presets: big (default) / small — toggled via the dropdown row or ~/.claude/swiftbar/.batt-size ──
 const SIZE_FILE = `${HOME}/.claude/swiftbar/.batt-size`;
 let SIZE = "big";
 try {
   if (readFileSync(SIZE_FILE, "utf8").trim() === "small") SIZE = "small";
 } catch {}
 
-// 4x6 픽셀 폰트 (big 프리셋)
+// 4x6 pixel font (big preset)
 const FONT46 = {
   0: ["0110", "1001", "1001", "1001", "1001", "0110"],
   1: ["0010", "0110", "0010", "0010", "0010", "0111"],
@@ -182,7 +198,7 @@ const FONT46 = {
   C: ["0110", "1001", "1000", "1000", "1001", "0110"],
   X: ["1001", "1001", "0110", "0110", "1001", "1001"],
 };
-// 3x5 클래식 픽셀 폰트 (small 프리셋)
+// 3x5 classic pixel font (small preset)
 const FONT35 = {
   0: ["111", "101", "101", "101", "111"],
   1: ["010", "110", "010", "010", "111"],
@@ -197,7 +213,7 @@ const FONT35 = {
   C: ["111", "100", "100", "100", "111"],
   X: ["101", "101", "010", "101", "101"],
 };
-// 프리셋별 지오메트리: font/자간, 캡슐(bw×bh), 배치(capw·간격), 캔버스 높이, 숫자 y오프셋
+// Per-preset geometry: font/advance, capsule (bw×bh), layout (capw·gaps), canvas height, digit y-offset
 const PRESET =
   SIZE === "small"
     ? {
@@ -227,9 +243,9 @@ const PRESET =
         dy: 3,
       };
 const NUM = PRESET.font;
-// altCol/boundaryX 지정 시: 픽셀 x가 채움 경계(boundaryX) 왼쪽이면 altCol(밝은 채움 위 대비),
-// 오른쪽(빈 배경)이면 col. 지정 없으면 col 단색(그룹 라벨용).
-const chAdv = PRESET.adv; // big: 5px('1'만 4px 커닝 — "100" 물림 방지), small: 4px
+// With altCol/boundaryX: pixels left of the fill boundary use altCol (contrast on the bright
+// fill), pixels right of it (empty background) use col. Without them: solid col (group labels).
+const chAdv = PRESET.adv; // big: 5px ('1' kerns to 4px so "100" doesn't collide), small: 4px
 function drawNum(cv, x, y, str, col, altCol, boundaryX) {
   let cx = x;
   for (const ch of str) {
@@ -246,21 +262,21 @@ function drawNum(cv, x, y, str, col, altCol, boundaryX) {
   return cx;
 }
 const numW = (s) => [...s].reduce((w, ch) => w + chAdv(ch), 0) - 1;
-// 실제 macOS 배터리 인디케이터 색 (Apple HIG system colors, 다크/라이트 각각)
+// Real macOS battery indicator colors (Apple HIG system colors, dark/light variants)
 function heatRemain(r, dark) {
   if (r <= 20) return dark ? [255, 69, 58] : [255, 59, 48]; // systemRed
   if (r < 50) return dark ? [255, 214, 10] : [255, 204, 0]; // systemYellow
   return dark ? [48, 209, 88] : [52, 199, 89]; // systemGreen
 }
 const heatRemainHex = (r) =>
-  r <= 20 ? "#FF453A" : r < 50 ? "#FFD60A" : "#30D158"; // 드롭다운 게이지 (다크 기준)
-// 캡슐 하나: 테두리 + 잔량 채움 + 안에 잔량 숫자(100 포함, 항상 표시)
+  r <= 20 ? "#FF453A" : r < 50 ? "#FFD60A" : "#30D158"; // dropdown gauges (dark theme)
+// One capsule: outline + remaining fill + the remaining number inside (always shown, incl. 100)
 function drawCapsule(cv, x, midY, remain, ink, dark) {
   const bw = PRESET.bw,
     bh = PRESET.bh,
     by = midY - Math.floor(bh / 2);
   _stroke(cv, x, by, bw, bh, ink);
-  _rect(cv, x + bw, by + 3, 2, bh - 6, ink); // 단자
+  _rect(cv, x + bw, by + 3, 2, bh - 6, ink); // terminal nub
   if (remain != null) {
     const innerW = bw - 4;
     const v = Math.max(0, Math.min(100, remain));
@@ -268,7 +284,7 @@ function drawCapsule(cv, x, midY, remain, ink, dark) {
     if (fw > 0) _rect(cv, x + 2, by + 2, fw, bh - 4, heatRemain(remain, dark));
     const s = String(Math.round(v));
     const tx = x + Math.floor((bw - numW(s)) / 2);
-    // 채움(밝은 system color) 위 픽셀은 어두운 숫자, 빈 배경 위는 ink → 어디서나 대비 확보
+    // Dark digits over the bright fill, ink digits over the empty background → contrast everywhere
     drawNum(
       cv,
       tx,
@@ -281,7 +297,7 @@ function drawCapsule(cv, x, midY, remain, ink, dark) {
   }
   return x + bw + 2;
 }
-// 캡슐 N개(items=[{label,remain}]). 그룹(C=Claude / X=Codex) 앞에 라벨 문자.
+// N capsules (items=[{label,remain}]). Group label letter (C=Claude / X=Codex) before each group.
 function renderBatteryImage(dark, items) {
   const ink = dark ? [235, 235, 235] : [45, 45, 45];
   const CAPW = PRESET.capw,
@@ -291,7 +307,7 @@ function renderBatteryImage(dark, items) {
     LBLGAP = PRESET.lblgap;
   const H = PRESET.H;
   const midY = Math.floor(H / 2);
-  // 폭 계산 (그룹 라벨 포함)
+  // Width calculation (including group labels)
   let W = PAD * 2;
   let pg = null;
   for (let i = 0; i < items.length; i++) {
@@ -310,7 +326,7 @@ function renderBatteryImage(dark, items) {
     const g = items[i].label[0];
     if (g !== pg) {
       if (pg !== null) x += GGAP;
-      drawNum(cv, x, midY - PRESET.dy, g, ink); // 그룹 라벨 C 또는 X
+      drawNum(cv, x, midY - PRESET.dy, g, ink); // group label C or X
       x += numW(g) + LBLGAP;
       pg = g;
     } else x += GAP;
@@ -332,7 +348,7 @@ function isDarkMode() {
   }
 }
 
-// ── 게이지 렌더 (부분 블록, 의존성 0) ──────────────────────
+// ── Gauge renderer (partial blocks, zero dependencies) ──────────
 const FULL = "█",
   EMPTY = "░",
   PART = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
@@ -355,14 +371,14 @@ function bar(pct, w) {
   s += EMPTY.repeat(Math.max(0, w - used));
   return s;
 }
-// 사용률 → 색 (GitHub 신호색)
+// Usage % → traffic-light color (GitHub palette)
 function heat(pct) {
-  if (pct >= 80) return "#f85149"; // 빨강
-  if (pct >= 50) return "#d29922"; // 노랑
-  return "#3fb950"; // 초록
+  if (pct >= 80) return "#f85149"; // red
+  if (pct >= 50) return "#d29922"; // amber
+  return "#3fb950"; // green
 }
 
-// ── 공용 유틸 ──────────────────────────────────────────────
+// ── Shared utils ──────────────────────────────────────────────
 const fmtDur = (secs) => {
   if (secs <= 0) return "0m";
   const h = Math.floor(secs / 3600);
@@ -377,7 +393,7 @@ const fmtTok = (n) => {
   return `${n}`;
 };
 
-// ── 1. Claude Code: 활성 5시간 블록 ────────────────────────
+// ── 1. Claude Code: active 5-hour block ────────────────────────
 function getClaude() {
   try {
     const raw = execSync(`${CCUSAGE} blocks --active --json`, {
@@ -411,7 +427,7 @@ function getClaude() {
   }
 }
 
-// ── 1b. Claude 오늘 모델별 사용 (Opus/Sonnet/Fable/Haiku) ──
+// ── 1b. Claude usage by model today (Opus/Sonnet/Fable/Haiku) ──
 const MODEL_NAMES = {
   "claude-fable-5": "Fable 5",
   "claude-opus-4-8": "Opus 4.8",
@@ -450,15 +466,16 @@ function getClaudeModels() {
   }
 }
 
-// ── 1c. Claude 실제 rate limit — Anthropic OAuth usage API 직접 조회 ──
-// 이 맥의 Claude Code 로그인 토큰(키체인)으로 /usage와 같은 데이터를 서버에서 직접
-// 가져온다. 수치는 계정 단위 합산이라 다른 디바이스·데스크톱앱·웹 사용분도 포함.
-// 실패 시 폴백: 자체 캐시(마지막 성공 응답) → 레거시 usage-cache.json 파일.
+// ── 1c. Claude real rate limits — queried live from Anthropic's OAuth usage API ──
+// Uses this Mac's Claude Code login token (Keychain) to fetch the same data /usage shows.
+// Numbers are account-level, so usage from every device/surface is included.
+// Fallbacks on failure: own cache (last good response) → legacy usage-cache.json files.
 const CLAUDE_STATE_DIR = `${HOME}/.claude/swiftbar`;
 const CLAUDE_USAGE_CACHE = `${CLAUDE_STATE_DIR}/.claude-usage.json`;
-// Codex도 계정 단위 라이브 조회가 가능하다: Codex CLI가 자체적으로 60초마다 폴링하는
-// ChatGPT usage 엔드포인트(/backend-api/wham/usage)를 auth.json의 토큰으로 직접 GET한다.
-// 응답은 요청(토큰 소비) 없이 현재 한도만 주므로, 세션 로그(로컬·맥마다 다름) 대신 이걸 우선.
+// Codex also supports live account-level queries: GET the ChatGPT usage endpoint
+// (/backend-api/wham/usage) that Codex CLI itself polls every 60s, using the auth.json token.
+// The response reports current limits without spending tokens, so it beats session logs
+// (which are local and differ per machine).
 const CODEX_AUTH = `${HOME}/.codex/auth.json`;
 const CODEX_USAGE_CACHE = `${CLAUDE_STATE_DIR}/.codex-usage.json`;
 const LEGACY_USAGE_FILES = [
@@ -466,10 +483,10 @@ const LEGACY_USAGE_FILES = [
   `${HOME}/.claude/PAI/MEMORY/STATE/usage-cache.json`,
 ];
 
-// 토큰은 반환값으로만 존재 — 파일·로그·프로세스 인자 어디에도 남기지 않는다
+// The token exists only as a return value — never written to files, logs, or process args
 function readClaudeToken() {
-  // 옵트아웃: 키체인 접근/라이브 조회를 원치 않으면 `touch ~/.claude/swiftbar/.no-live`
-  // — 키체인 프롬프트에서 '거부'를 누르면 2분마다 다시 뜨므로, 그 대신 이 스위치를 쓴다.
+  // Opt-out: `touch ~/.claude/swiftbar/.no-live` disables Keychain access / live queries
+  // — clicking 'Deny' on the Keychain prompt would re-prompt every 2 minutes; use this instead.
   if (existsSync(`${CLAUDE_STATE_DIR}/.no-live`)) return null;
   try {
     const raw = execSync(
@@ -480,7 +497,7 @@ function readClaudeToken() {
     if (t) return t;
   } catch {}
   try {
-    // 키체인이 없는 환경(예: 수동 이전) 대비 — Claude Code의 파일 자격증명
+    // For environments without the Keychain item (e.g. manual migration) — file credentials
     const raw = readFileSync(`${HOME}/.claude/.credentials.json`, "utf8");
     return JSON.parse(raw)?.claudeAiOauth?.accessToken ?? null;
   } catch {}
@@ -491,7 +508,7 @@ function fetchClaudeUsageLive() {
   const token = readClaudeToken();
   if (!token) return null;
   try {
-    // Authorization 헤더는 stdin(-H @-)으로 전달 — ps 프로세스 목록에 토큰 노출 방지
+    // Authorization header passed via stdin (-H @-) — keeps the token out of `ps` output
     const raw = execSync(
       `/usr/bin/curl -fsS --max-time 5 -H @- -H "anthropic-beta: oauth-2025-04-20" https://api.anthropic.com/api/oauth/usage`,
       {
@@ -536,7 +553,7 @@ function readClaudeUsageFallback() {
   return null;
 }
 
-// 5시간 세션 / 주간 전체 / Fable 주간(weekly_scoped) 사용률
+// 5-hour session / weekly overall / Fable weekly (weekly_scoped) utilization
 function getClaudeUsage() {
   const src = fetchClaudeUsageLive() ?? readClaudeUsageFallback();
   if (!src) return null;
@@ -545,7 +562,7 @@ function getClaudeUsage() {
     const toTs = (iso) => (iso ? Math.floor(Date.parse(iso) / 1000) : null);
     const win = (o) =>
       o ? { pct: o.utilization ?? 0, resetsAt: toTs(o.resets_at) } : null;
-    // Fable(또는 최상위 모델) 주간 scoped 한도
+    // Weekly scoped cap for Fable (or whichever top model)
     let fable = null;
     for (const l of d.limits || []) {
       const mdl = l.scope?.model?.display_name;
@@ -570,7 +587,7 @@ function getClaudeUsage() {
   }
 }
 
-// ── 2. Codex: 가장 신선한 rate_limits ──────────────────────
+// ── 2. Codex: freshest rate_limits ──────────────────────────────
 function walkJsonl(dir, out) {
   let entries;
   try {
@@ -588,7 +605,7 @@ function walkJsonl(dir, out) {
     }
   }
 }
-// auth.json에서 ChatGPT 토큰을 읽는다(.no-live면 라이브 조회 안 함, Claude와 같은 스위치).
+// Read the ChatGPT token from auth.json (.no-live disables live queries, same switch as Claude)
 function readCodexToken() {
   if (existsSync(`${CLAUDE_STATE_DIR}/.no-live`)) return null;
   try {
@@ -599,14 +616,14 @@ function readCodexToken() {
   return null;
 }
 
-// 라이브: ChatGPT usage 엔드포인트를 직접 GET → 계정 단위 최신 한도(전 디바이스 동일).
-// 응답 필드명이 세션 로그와 다르므로(primary_window/limit_window_seconds/reset_at)
-// 세션 로그 형식(primary/window_minutes/resets_at)으로 정규화해 이후 로직을 그대로 쓴다.
+// Live: GET the ChatGPT usage endpoint directly → account-level current limits (same on
+// every device). Field names differ from session logs (primary_window/limit_window_seconds/
+// reset_at), so normalize to the session-log shape (primary/window_minutes/resets_at).
 function fetchCodexUsageLive() {
   const c = readCodexToken();
   if (!c) return null;
   try {
-    // Authorization은 stdin(-H @-)으로 — ps 목록에 토큰 노출 방지 (Claude와 동일 패턴)
+    // Authorization via stdin (-H @-) — keeps the token out of `ps` (same pattern as Claude)
     const raw = execSync(
       `/usr/bin/curl -fsS --max-time 5 -H @- -H "ChatGPT-Account-Id: ${c.account}" -H "User-Agent: codex-cli" https://chatgpt.com/backend-api/wham/usage`,
       {
@@ -628,19 +645,19 @@ function fetchCodexUsageLive() {
             resets_at: w.reset_at ?? null,
           }
         : null;
-    // primary_window/secondary_window는 "5시간/주간" 고정이 아니라 그때 활성인 창이다
-    // (5시간 미사용 시 주간 창이 primary로 오기도 함). limit_window_seconds로 판별해
-    // 올바른 슬롯(5시간=primary / 주간=secondary)에 배치한다. 안 온 창은 null.
+    // primary_window/secondary_window aren't fixed "5h/weekly" — they're whatever windows are
+    // active right now (with no recent 5h usage, the weekly window can arrive as primary).
+    // Classify by limit_window_seconds into the right slot (5h=primary / weekly=secondary).
     let primary = null;
     let secondary = null;
     for (const w of [rl?.primary_window, rl?.secondary_window]) {
       if (!w) continue;
       const secs = w.limit_window_seconds || 0;
       if (secs && secs <= 6 * 3600)
-        primary = norm(w); // ~5시간
-      else secondary = norm(w); // ~주간(7일)
+        primary = norm(w); // ~5 hours
+      else secondary = norm(w); // ~weekly (7 days)
     }
-    // credits는 창(primary/secondary)이 전혀 없을 때만 의미(premium 소진형). 세션 로그와 동일.
+    // credits only matter when no windows at all (premium pay-per-use). Same as session logs.
     const credits =
       !primary && !secondary && d?.credits
         ? {
@@ -686,7 +703,7 @@ function getCodexFromSessions() {
           continue;
         }
         const rl = obj.payload?.rate_limits ?? obj.rate_limits;
-        // prolite=primary/secondary(%), premium=credits(잔액) — 둘 중 하나라도 있으면 유효
+        // prolite=primary/secondary (%), premium=credits (balance) — either shape is valid
         if (rl && (rl.primary || rl.secondary || rl.credits)) {
           return {
             measuredAt: Math.floor(f.mtime / 1000),
@@ -704,7 +721,7 @@ function getCodexFromSessions() {
   return null;
 }
 
-// 라이브(계정 단위, 전 디바이스 동일) 우선 → 실패 시 로컬 세션 로그 → 마지막 라이브 캐시.
+// Live (account-level, same on every device) first → local session logs → last live cache.
 function getCodex() {
   const live = fetchCodexUsageLive();
   if (live) return live;
@@ -726,22 +743,22 @@ function windowState(w) {
     stale,
   };
 }
-// ── 렌더링 ─────────────────────────────────────────────────
+// ── Rendering ──────────────────────────────────────────────────
 const claude = getClaude();
 const cusage = getClaudeUsage();
 const cmodels = getClaudeModels();
 const codex = getCodex();
 const out = [];
 
-// 메뉴바: 배터리 잔량 아이콘 (전부 "남은 %")
-//   Claude(usage-cache): C5=5시간세션 · CW=주간전체 · CF=Fable 주간
-//   Codex(rate_limits) : X5=5시간 · XW=주간
+// Menu bar: battery icons (all values are "remaining %")
+//   Claude: C5=5h session · CW=weekly · CF=Fable weekly
+//   Codex:  X5=5h · XW=weekly
 const rem = (pct) => (pct == null ? null : Math.max(0, 100 - pct));
-// 한쪽만 쓰는 사용자 대응: 데이터가 있는 서비스만 표시
+// Single-service users: only show the service that has data
 const hasClaude = !!cusage || !!(claude && !claude.error);
 const hasCodex = !!codex;
 const battItems = [];
-// Claude — usage-cache 있으면 3종, 없어도 ccusage 블록이 있으면 C5만. 둘 다 없으면 Claude 배터리 생략.
+// Claude — 3 capsules with usage data, or C5 only from the ccusage block. Neither → skip.
 if (cusage) {
   battItems.push({ label: "C5", remain: rem(cusage.fiveHour?.pct) });
   battItems.push({ label: "CW", remain: rem(cusage.weekly?.pct) });
@@ -750,16 +767,16 @@ if (cusage) {
 } else if (claude && !claude.error) {
   battItems.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct) });
 }
-// Codex — 세션 데이터 있을 때만. Codex 안 쓰는 사람에겐 X 배터리 자체를 안 그림.
+// Codex — only with session data. No Codex → no X batteries at all.
 if (codex && (codex.primary || codex.secondary)) {
-  // prolite: 5시간·주간 % 창
+  // prolite: 5h / weekly percentage windows
   const p = windowState(codex.primary);
   const s = windowState(codex.secondary);
-  // 그때 활성인 창만 그린다 — 없는 창은 빈 캡슐 대신 생략 (5시간 미사용 시 X5 없음)
+  // Draw only the windows active right now — omit missing ones instead of empty capsules
   if (p) battItems.push({ label: "X5", remain: Math.max(0, 100 - p.pct) });
   if (s) battItems.push({ label: "XW", remain: Math.max(0, 100 - s.pct) });
 } else if (codex && codex.credits) {
-  // premium: 크레딧 잔액 (총량 미제공 → 있음=100 / 소진=0 / 무제한=100)
+  // premium: credit balance (no totals available → has=100 / exhausted=0 / unlimited=100)
   const cr = codex.credits;
   const remain = cr.unlimited
     ? 100
@@ -768,8 +785,8 @@ if (codex && (codex.primary || codex.secondary)) {
       : 0;
   battItems.push({ label: "X", remain });
 }
-// 잔량 숫자가 캡슐 안에 들어감 → 메뉴바는 이미지만. 라벨은 드롭다운 범례.
-// 둘 다 없으면(신규/양쪽 미사용) 배터리 대신 안내 아이콘.
+// The remaining number sits inside each capsule → menu bar is image-only; labels live in the legend.
+// No data at all (fresh install / neither tool used) → placeholder icon instead.
 if (battItems.length) {
   out.push(`| image=${renderBatteryImage(isDarkMode(), battItems)}`);
 } else {
@@ -778,19 +795,25 @@ if (battItems.length) {
 out.push("---");
 const codexLegend =
   codex?.credits && !codex.primary && !codex.secondary
-    ? "X = Codex 크레딧"
-    : "X5·XW = Codex 5시간·주간";
+    ? L("X = Codex 크레딧", "X = Codex credits")
+    : L("X5·XW = Codex 5시간·주간", "X5·XW = Codex 5h·weekly");
 const legendParts = [];
-if (hasClaude) legendParts.push("C5·CW·CF = Claude 5시간·주간·Fable");
+if (hasClaude)
+  legendParts.push(
+    L(
+      "C5·CW·CF = Claude 5시간·주간·Fable",
+      "C5·CW·CF = Claude 5h·weekly·Fable",
+    ),
+  );
 if (hasCodex) legendParts.push(codexLegend);
 if (legendParts.length) {
   out.push(
-    `🔋 남은 %  ·  ${legendParts.join("  ·  ")} | size=11 color=#8b949e`,
+    `🔋 ${L("남은 %", "% left")}  ·  ${legendParts.join("  ·  ")} | size=11 color=#8b949e`,
   );
   out.push("---");
 }
 
-// Claude 상세 — hasClaude일 때만 (Claude Code 안 쓰면 섹션 자체 생략)
+// Claude details — only when hasClaude (section omitted entirely otherwise)
 if (hasClaude) {
   out.push("Claude Code | size=13 color=#8b949e");
   if (cusage) {
@@ -799,31 +822,32 @@ if (hasClaude) {
       const r = Math.max(0, 100 - (w.pct ?? 0));
       const reset = w.resetsAt
         ? w.resetsAt < now
-          ? "리셋됨"
-          : `리셋 ${fmtDur(w.resetsAt - now)}`
+          ? L("리셋됨", "reset")
+          : `${L("리셋", "resets")} ${fmtDur(w.resetsAt - now)}`
         : "";
       out.push(
-        `${label} ▕${bar(r, 20)}▏ ${Math.round(r)}%  (사용 ${Math.round(w.pct ?? 0)}%)${reset ? "  ·  " + reset : ""} | font=Menlo color=${heatRemainHex(r)}`,
+        `${label} ▕${bar(r, 20)}▏ ${Math.round(r)}%  (${L("사용", "used")} ${Math.round(w.pct ?? 0)}%)${reset ? "  ·  " + reset : ""} | font=Menlo color=${heatRemainHex(r)}`,
       );
     };
-    winRow("5시간 남음", cusage.fiveHour);
-    winRow("주간 남음 ", cusage.weekly);
-    if (cusage.fable) winRow(`${cusage.fable.model} 남음`, cusage.fable);
+    winRow(L("5시간 남음", "5h left  "), cusage.fiveHour);
+    winRow(L("주간 남음 ", "wk left  "), cusage.weekly);
+    if (cusage.fable)
+      winRow(`${cusage.fable.model} ${L("남음", "left")}`, cusage.fable);
     out.push(
       cusage.live
-        ? `라이브 (Anthropic usage API — 전 디바이스 합산) | size=11 color=#8b949e`
-        : `측정 ${fmtDur(now - cusage.measuredAt)} 전 (캐시 폴백 — Claude Code 로그인·네트워크 확인) | size=11 color=#d29922`,
+        ? `${L("라이브 (Anthropic usage API — 전 디바이스 합산)", "live (Anthropic usage API — all devices combined)")} | size=11 color=#8b949e`
+        : `${L(`측정 ${fmtDur(now - cusage.measuredAt)} 전 (캐시 폴백 — Claude Code 로그인·네트워크 확인)`, `cached ${fmtDur(now - cusage.measuredAt)} ago (fallback — check Claude Code login/network)`)} | size=11 color=#d29922`,
     );
   }
   if (claude && !claude.error) {
     out.push(
-      `블록 비용  $${claude.cost.toFixed(2)}  ·  ${fmtTok(claude.tokens)} 토큰  ·  $${claude.costPerHour?.toFixed(1) ?? "?"}/h | font=Menlo size=11 color=#8b949e`,
+      `${L("블록 비용", "block cost")}  $${claude.cost.toFixed(2)}  ·  ${fmtTok(claude.tokens)} ${L("토큰", "tokens")}  ·  $${claude.costPerHour?.toFixed(1) ?? "?"}/h | font=Menlo size=11 color=#8b949e`,
     );
   }
-  // 오늘 모델별 사용 (최대 모델 대비 막대)
+  // Today's per-model usage (bars relative to the top model)
   if (cmodels && cmodels.models.length) {
     out.push(
-      `오늘 모델별  ·  합 $${cmodels.total.toFixed(0)} | size=11 color=#8b949e`,
+      `${L("오늘 모델별", "today by model")}  ·  ${L("합", "total")} $${cmodels.total.toFixed(0)} | size=11 color=#8b949e`,
     );
     const maxCost = cmodels.models[0].cost || 1;
     for (const m of cmodels.models) {
@@ -837,102 +861,111 @@ if (hasClaude) {
   out.push("---");
 }
 
-// Codex 상세 — hasCodex일 때만 (Codex 안 쓰면 섹션 자체 생략)
+// Codex details — only when hasCodex (section omitted entirely otherwise)
 if (hasCodex) {
   out.push(
     `Codex${codex?.plan ? " · " + codex.plan : codex?.limitId ? " · " + codex.limitId : ""} | size=13 color=#8b949e`,
   );
   const p = windowState(codex.primary);
   const s = windowState(codex.secondary);
-  // premium: primary/secondary 없이 크레딧 잔액만
+  // premium: no primary/secondary, credit balance only
   if (!p && !s && codex.credits) {
     const cr = codex.credits;
     if (cr.unlimited) {
-      out.push("크레딧  무제한 | font=Menlo color=#3fb950");
-    } else if (!cr.has_credits || Number(cr.balance) <= 0) {
-      out.push("크레딧  소진 · 한도 초과 (0) | font=Menlo color=#f85149");
       out.push(
-        "      Codex 설정에서 크레딧 구매 또는 리셋 대기 | font=Menlo size=11 color=#8b949e",
+        `${L("크레딧  무제한", "credits  unlimited")} | font=Menlo color=#3fb950`,
+      );
+    } else if (!cr.has_credits || Number(cr.balance) <= 0) {
+      out.push(
+        `${L("크레딧  소진 · 한도 초과 (0)", "credits  exhausted · limit reached (0)")} | font=Menlo color=#f85149`,
+      );
+      out.push(
+        `      ${L("Codex 설정에서 크레딧 구매 또는 리셋 대기", "buy credits in Codex settings or wait for reset")} | font=Menlo size=11 color=#8b949e`,
       );
     } else {
-      out.push(`크레딧  잔액 ${cr.balance} | font=Menlo color=#3fb950`);
+      out.push(
+        `${L("크레딧  잔액", "credits  balance")} ${cr.balance} | font=Menlo color=#3fb950`,
+      );
     }
   }
   if (p) {
     const reset = p.stale
-      ? "리셋됨"
+      ? L("리셋됨", "reset")
       : p.resetsIn != null
-        ? `리셋 ${fmtDur(p.resetsIn)}`
+        ? `${L("리셋", "resets")} ${fmtDur(p.resetsIn)}`
         : "";
     const pr = Math.max(0, 100 - p.pct);
     out.push(
-      `5시간 남음 ▕${bar(pr, 20)}▏ ${Math.round(pr)}%  (사용 ${Math.round(p.pct)}%) | font=Menlo color=${heatRemainHex(pr)}`,
+      `${L("5시간 남음", "5h left  ")} ▕${bar(pr, 20)}▏ ${Math.round(pr)}%  (${L("사용", "used")} ${Math.round(p.pct)}%) | font=Menlo color=${heatRemainHex(pr)}`,
     );
     out.push(`      ${reset} | font=Menlo size=11 color=#8b949e`);
   }
   if (s) {
     const reset = s.stale
-      ? "리셋됨"
+      ? L("리셋됨", "reset")
       : s.resetsIn != null
-        ? `리셋 ${fmtDur(s.resetsIn)}`
+        ? `${L("리셋", "resets")} ${fmtDur(s.resetsIn)}`
         : "";
     const sr = Math.max(0, 100 - s.pct);
     out.push(
-      `주간 남음  ▕${bar(sr, 20)}▏ ${Math.round(sr)}%  (사용 ${Math.round(s.pct)}%) | font=Menlo color=${heatRemainHex(sr)}`,
+      `${L("주간 남음 ", "wk left  ")} ▕${bar(sr, 20)}▏ ${Math.round(sr)}%  (${L("사용", "used")} ${Math.round(s.pct)}%) | font=Menlo color=${heatRemainHex(sr)}`,
     );
     out.push(`      ${reset} | font=Menlo size=11 color=#8b949e`);
   }
   const age = now - codex.measuredAt;
   out.push(
     codex.live
-      ? `라이브 (ChatGPT usage API — 전 디바이스 합산) | size=11 color=#8b949e`
-      : `⚠ 라이브 조회 실패 — 로그인·네트워크 확인 (${fmtDur(age)} 전 로컬 로그값) | size=11 color=#d29922`,
+      ? `${L("라이브 (ChatGPT usage API — 전 디바이스 합산)", "live (ChatGPT usage API — all devices combined)")} | size=11 color=#8b949e`
+      : `⚠ ${L(`라이브 조회 실패 — 로그인·네트워크 확인 (${fmtDur(age)} 전 로컬 로그값)`, `live query failed — check login/network (local log from ${fmtDur(age)} ago)`)} | size=11 color=#d29922`,
   );
   out.push("---");
 }
 
-// 둘 다 없으면(신규/양쪽 미사용) 안내
+// Neither service has data (fresh install) → hint
 if (!hasClaude && !hasCodex) {
   out.push(
-    "Claude Code나 Codex를 실행하면 사용량이 표시됩니다 | size=12 color=gray",
+    `${L("Claude Code나 Codex를 실행하면 사용량이 표시됩니다", "Run Claude Code or Codex and usage will appear here")} | size=12 color=gray`,
   );
   out.push("---");
 }
 
-// 새 버전이 있으면 강조 원클릭 업데이트, 없어도 수동 업데이트 행은 항상 노출
+// Highlighted one-click update when a new version exists; manual update row always shown
 const upd = getUpdateInfo();
 if (upd.hasUpdate) {
   out.push(
-    `🆕 v${upd.latest} 업데이트 (현재 v${VERSION}) | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true color=#28963f`,
+    `🆕 ${L(`v${upd.latest} 업데이트 (현재 v${VERSION})`, `Update to v${upd.latest} (current v${VERSION})`)} | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true color=#28963f`,
   );
 } else {
   out.push(
-    `⬆️ 지금 업데이트 — GitHub 최신으로 교체 (현재 v${VERSION}) | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true`,
+    `⬆️ ${L(`지금 업데이트 — GitHub 최신으로 교체 (현재 v${VERSION})`, `Update now — replace with latest from GitHub (current v${VERSION})`)} | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true`,
   );
 }
-out.push("🔄 지금 새로고침 | refresh=true");
-// ccusage가 있을 때만(선택 의존) 대시보드 바로가기 노출
+out.push(`🔄 ${L("지금 새로고침", "Refresh now")} | refresh=true`);
+// Dashboard shortcut only when ccusage is available (optional dependency)
 if (claude && !claude.error) {
   out.push(
-    `📊 ccusage 대시보드 열기 | bash="${CCUSAGE}" param1=blocks param2=--active terminal=true`,
+    `📊 ${L("ccusage 대시보드 열기", "Open ccusage dashboard")} | bash="${CCUSAGE}" param1=blocks param2=--active terminal=true`,
   );
 }
 out.push(
   `v${VERSION}  ·  Claude & Codex Usage Battery | size=11 color=#8b949e`,
 );
-// 크기 전환 — .batt-size 파일에 반대 프리셋을 기록하고 즉시 새로고침
+// Size toggle — write the other preset to .batt-size and refresh immediately
 {
   const other = SIZE === "big" ? "small" : "big";
+  const cur =
+    SIZE === "big" ? L("크게 (기본)", "big (default)") : L("작게", "small");
+  const next = other === "big" ? L("크게", "big") : L("작게", "small");
   out.push(
-    `↕ 배터리 크기: ${SIZE === "big" ? "크게 (기본)" : "작게"} — 클릭하면 ${other === "big" ? "크게" : "작게"}로 | bash=/bin/sh param1=-c param2="mkdir -p '${HOME}/.claude/swiftbar' && echo ${other} > '${SIZE_FILE}'" terminal=false refresh=true size=11 color=#8b949e`,
+    `↕ ${L("배터리 크기", "battery size")}: ${cur} — ${L("클릭하면", "click for")} ${next} | bash=/bin/sh param1=-c param2="mkdir -p '${HOME}/.claude/swiftbar' && echo ${other} > '${SIZE_FILE}'" terminal=false refresh=true size=11 color=#8b949e`,
   );
 }
 out.push(
   `⭐ github.com/dennykim123/claude-codex-battery | href=https://github.com/dennykim123/claude-codex-battery size=11 color=#8b949e`,
 );
-// 위젯 끄기 — SwiftBar의 플러그인 비활성화 URL. 재활성화: SwiftBar 메뉴 → Plugins
+// Disable the widget — SwiftBar's plugin-disable URL. Re-enable: SwiftBar menu → Plugins
 out.push(
-  `✕ 위젯 끄기 (SwiftBar 설정에서 재활성화) | href=swiftbar://disableplugin?plugin=claude-codex-usage size=11 color=#8b949e`,
+  `✕ ${L("위젯 끄기 (SwiftBar 설정에서 재활성화)", "Disable widget (re-enable in SwiftBar settings)")} | href=swiftbar://disableplugin?plugin=claude-codex-usage size=11 color=#8b949e`,
 );
 
 console.log(out.join("\n"));

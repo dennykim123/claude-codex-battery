@@ -1,4 +1,4 @@
-// ccusage CLI 연동 (선택 의존 — 설치돼 있을 때만 블록 비용·모델별 사용 표시)
+// ccusage CLI integration (optional dependency — shows block cost / per-model usage only if installed)
 import Foundation
 
 struct ClaudeBlock {
@@ -26,7 +26,7 @@ func shortModel(_ n: String) -> String { MODEL_NAMES[n] ?? n.replacingOccurrence
 
 func ccusagePath() -> String? { findBin("ccusage") }
 
-// 활성 5시간 블록 (ccusage blocks --active)
+// Active 5-hour block (ccusage blocks --active)
 func getClaudeBlock(now: Int) -> ClaudeBlock? {
   guard let bin = ccusagePath(),
         let raw = runCmd(bin, ["blocks", "--active", "--json"], timeout: 20),
@@ -45,7 +45,7 @@ func getClaudeBlock(now: Int) -> ClaudeBlock? {
                      costPerHour: jn(jd(b["burnRate"])?["costPerHour"]))
 }
 
-// 오늘 모델별 사용 (ccusage daily --breakdown)
+// Today's usage by model (ccusage daily --breakdown)
 func getClaudeModels() -> (models: [ModelUse], total: Double)? {
   guard let bin = ccusagePath() else { return nil }
   let df = DateFormatter()

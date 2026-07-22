@@ -1,11 +1,11 @@
-// Claude 실제 rate limit — Anthropic OAuth usage API 직접 조회 (위젯 1c 포팅)
-// 이 맥의 Claude Code 로그인 토큰(키체인)으로 /usage 데이터를 서버에서 직접 가져온다.
-// 수치는 계정 단위 합산. 실패 시: 자체 캐시 → 레거시 usage-cache.json 폴백.
+// Claude's actual rate limit — queries the Anthropic OAuth usage API directly (ported from widget 1c)
+// Fetches /usage data straight from the server using this Mac's Claude Code login token (keychain).
+// Figures are aggregated at the account level. On failure: own cache → legacy usage-cache.json fallback.
 import Foundation
 
 struct UsageWindow {
-  let pct: Double // 사용률 %
-  let resetsAt: Int? // epoch 초
+  let pct: Double // usage %
+  let resetsAt: Int? // epoch seconds
 }
 
 struct FableWindow {
@@ -28,7 +28,7 @@ private let LEGACY_USAGE_FILES = [
   "\(HOME)/.claude/PAI/MEMORY/STATE/usage-cache.json",
 ]
 
-// 토큰은 반환값으로만 존재 — 파일·로그·프로세스 인자 어디에도 남기지 않는다
+// Token exists only in the return value — never left in files, logs, or process arguments
 private func readClaudeToken() -> String? {
   if liveDisabled() { return nil }
   if let raw = runCmd("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], timeout: 3),
@@ -36,7 +36,7 @@ private func readClaudeToken() -> String? {
      let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
     return t
   }
-  // 키체인이 없는 환경 대비 — Claude Code의 파일 자격증명
+  // For environments without a keychain — Claude Code's file-based credentials
   if let obj = readJSONFile("\(HOME)/.claude/.credentials.json"),
      let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
     return t
@@ -68,7 +68,7 @@ private func readFallback() -> (data: [String: Any], measuredAt: Int, live: Bool
   return nil
 }
 
-// 5시간 세션 / 주간 전체 / Fable 주간(weekly scoped) 사용률
+// 5-hour session / overall weekly / Fable weekly-scoped usage rates
 func getClaudeUsage(now: Int) -> ClaudeUsage? {
   guard let src = fetchLive(now: now) ?? readFallback() else { return nil }
   let d = src.data
@@ -76,7 +76,7 @@ func getClaudeUsage(now: Int) -> ClaudeUsage? {
     guard let w = jd(o) else { return nil }
     return UsageWindow(pct: jn(w["utilization"]) ?? 0, resetsAt: parseISO(jstr(w["resets_at"])))
   }
-  // Fable(또는 최상위 모델) 주간 scoped 한도
+  // Fable's (or the top-tier model's) weekly-scoped limit
   var fable: FableWindow? = nil
   for l0 in ja(d["limits"]) ?? [] {
     guard let l = jd(l0) else { continue }

@@ -1,8 +1,8 @@
-// 공용 유틸 — 경로·포맷·프로세스·HTTP·JSON 헬퍼 (위젯 JS의 공용부 포팅)
+// Shared utilities — path/format/process/HTTP/JSON helpers (ported from the widget JS's shared code)
 import Cocoa
 
 let HOME = NSHomeDirectory()
-let STATE_DIR = "\(HOME)/.claude/swiftbar" // SwiftBar 위젯과 캐시·설정 공유 (같은 파일 형식)
+let STATE_DIR = "\(HOME)/.claude/swiftbar" // Shares cache/settings with the SwiftBar widget (same file format)
 let REPO_URL = "https://github.com/dennykim123/claude-codex-battery"
 let APP_VERSION = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
 
@@ -11,10 +11,10 @@ func findBin(_ name: String) -> String? {
   firstExisting(["\(HOME)/.bun/bin/\(name)", "/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"])
 }
 
-// 라이브 조회 옵트아웃 스위치 (위젯과 동일: touch ~/.claude/swiftbar/.no-live)
+// Opt-out switch for live queries (same as the widget: touch ~/.claude/swiftbar/.no-live)
 func liveDisabled() -> Bool { FileManager.default.fileExists(atPath: "\(STATE_DIR)/.no-live") }
 
-// UI 언어: 시스템 언어가 한국어면 한국어, 아니면 영어 (테스트용 CCB_LANG=ko|en 강제 가능)
+// UI language: Korean if the system language is Korean, otherwise English (CCB_LANG=ko|en can force it for testing)
 let UI_KO: Bool = {
   if let f = ProcessInfo.processInfo.environment["CCB_LANG"] { return f == "ko" }
   return Locale.preferredLanguages.first?.hasPrefix("ko") ?? false
@@ -35,7 +35,7 @@ func fmtTok(_ n: Double) -> String {
   return String(format: "%.0f", n)
 }
 
-// 부분 블록 게이지 (▕█████▏) — 위젯 bar() 포팅
+// Partial-block gauge (▕█████▏) — ported from the widget's bar()
 func gaugeBar(_ pctIn: Double, _ w: Int) -> String {
   let pct = max(0, min(100, pctIn))
   let filled = pct / 100 * Double(w)
@@ -51,7 +51,7 @@ func gaugeBar(_ pctIn: Double, _ w: Int) -> String {
   return s
 }
 
-// 잔량 % → 신호색 (드롭다운, 다크 기준 — 위젯 heatRemainHex와 동일)
+// Remaining % → signal color (dropdown, dark-mode based — same as the widget's heatRemainHex)
 func heatRemainHex(_ r: Double) -> String { r <= 20 ? "#FF453A" : r < 50 ? "#FFD60A" : "#30D158" }
 
 func hexColor(_ s: String) -> NSColor? {
@@ -63,7 +63,7 @@ func hexColor(_ s: String) -> NSColor? {
                  blue: CGFloat(v & 0xff) / 255, alpha: 1)
 }
 
-// 외부 명령 실행 (타임아웃 포함, 실패 시 nil) — ccusage·security 전용
+// Run an external command (with timeout, nil on failure) — for ccusage/security only
 func runCmd(_ bin: String, _ args: [String], timeout: TimeInterval = 10) -> String? {
   let p = Process()
   p.executableURL = URL(fileURLWithPath: bin)
@@ -85,8 +85,8 @@ func runCmd(_ bin: String, _ args: [String], timeout: TimeInterval = 10) -> Stri
   return String(data: data, encoding: .utf8)
 }
 
-// 동기 HTTP GET (2xx만 성공) — 토큰은 헤더로만, 파일·프로세스 인자에 남기지 않음
-// CCB_DEBUG=1이면 상태·오류를 stderr로 출력 (진단용)
+// Synchronous HTTP GET (only 2xx counts as success) — token stays in headers only, never in files/process args
+// If CCB_DEBUG=1, prints status/errors to stderr (for diagnostics)
 func httpGet(_ urlStr: String, headers: [String: String], timeout: TimeInterval = 8) -> Data? {
   guard let url = URL(string: urlStr) else { return nil }
   var req = URLRequest(url: url, timeoutInterval: timeout)
@@ -109,7 +109,7 @@ func httpGet(_ urlStr: String, headers: [String: String], timeout: TimeInterval 
   return result
 }
 
-// JSON 접근 헬퍼 (동적 스키마 — JSONSerialization 기반)
+// JSON access helpers (dynamic schema — built on JSONSerialization)
 func jd(_ a: Any?) -> [String: Any]? { a as? [String: Any] }
 func ja(_ a: Any?) -> [Any]? { a as? [Any] }
 func jn(_ a: Any?) -> Double? { (a as? NSNumber)?.doubleValue }
@@ -138,7 +138,7 @@ func parseISO(_ s: String?) -> Int? {
   return nil
 }
 
-// 리셋 시각: 숫자(epoch초)와 ISO 문자열 둘 다 허용
+// Reset time: accepts both a number (epoch seconds) and an ISO string
 func resetTs(_ v: Any?) -> Int? {
   if let n = jn(v) { return Int(n) }
   return parseISO(jstr(v))

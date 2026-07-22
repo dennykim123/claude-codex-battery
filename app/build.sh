@@ -1,5 +1,5 @@
 #!/bin/bash
-# 네이티브 메뉴바 앱 빌드 — swiftc로 컴파일해 .app 번들 구성 (Xcode 프로젝트 불필요)
+# Build the native menu bar app — compile with swiftc and assemble the .app bundle (no Xcode project needed)
 set -e
 cd "$(dirname "$0")"
 APP="ClaudeCodexBattery.app"
@@ -7,11 +7,11 @@ NAME="ClaudeCodexBattery"
 BID="com.dennykim.claude-codex-battery-app"
 VERSION="$(cat ../VERSION)"
 
-echo "🔨 컴파일…"
+echo "🔨 Compiling…"
 rm -rf "$APP" "$NAME"
 swiftc -O *.swift -o "$NAME" -framework Cocoa -framework ServiceManagement
 
-echo "📦 .app 번들 구성…"
+echo "📦 Assembling .app bundle…"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 mv "$NAME" "$APP/Contents/MacOS/$NAME"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
@@ -33,7 +33,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 로컬 실행용 ad-hoc 서명 (무료 — 자기 맥에서 Gatekeeper 통과. 공개 배포는 release.sh)
-codesign --force --deep --sign - "$APP" 2>/dev/null && echo "✅ ad-hoc 서명 완료" || echo "ⓘ ad-hoc 서명 생략"
+# Ad-hoc signing for local use (free — passes Gatekeeper on your own Mac. Use release.sh for public distribution)
+codesign --force --deep --sign - "$APP" 2>/dev/null && echo "✅ ad-hoc signing complete" || echo "ⓘ skipped ad-hoc signing"
 
-echo "✅ 빌드 완료: $(pwd)/$APP (v$VERSION)"
+echo "✅ Build complete: $(pwd)/$APP (v$VERSION)"

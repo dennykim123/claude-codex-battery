@@ -1,13 +1,13 @@
-// 메뉴바 배터리 아이콘 렌더러 — 위젯 JS의 픽셀 캔버스·폰트·지오메트리를 그대로 포팅
-// (PNG 인코딩 대신 CGImage 직생성. 픽셀 배치는 JS와 1:1 동일)
+// Menu bar battery icon renderer — ports the widget JS's pixel canvas, font, and geometry as-is
+// (Builds CGImage directly instead of PNG encoding. Pixel placement matches the JS 1:1)
 import Cocoa
 
 struct BattItem {
-  let label: String // "C5"·"CW"·"CF"·"X5"·"XW"·"X" — 첫 글자가 그룹(C/X)
-  let remain: Double? // 남은 % (nil이면 빈 캡슐)
+  let label: String // "C5"·"CW"·"CF"·"X5"·"XW"·"X" — the first letter is the group (C/X)
+  let remain: Double? // remaining % (nil means an empty capsule)
 }
 
-// 4x6 픽셀 폰트 (big 프리셋)
+// 4x6 pixel font (big preset)
 private let FONT46: [Character: [String]] = [
   "0": ["0110", "1001", "1001", "1001", "1001", "0110"],
   "1": ["0010", "0110", "0010", "0010", "0010", "0111"],
@@ -22,7 +22,7 @@ private let FONT46: [Character: [String]] = [
   "C": ["0110", "1001", "1000", "1000", "1001", "0110"],
   "X": ["1001", "1001", "0110", "0110", "1001", "1001"],
 ]
-// 3x5 클래식 픽셀 폰트 (small 프리셋)
+// 3x5 classic pixel font (small preset)
 private let FONT35: [Character: [String]] = [
   "0": ["111", "101", "101", "101", "111"],
   "1": ["010", "110", "010", "010", "111"],
@@ -38,10 +38,10 @@ private let FONT35: [Character: [String]] = [
   "X": ["101", "101", "010", "101", "101"],
 ]
 
-// 프리셋별 지오메트리 (JS PRESET와 동일 수치)
+// Per-preset geometry (same values as the JS PRESET)
 private struct Preset {
   let font: [Character: [String]]
-  let adv: (Character) -> Int // 자간 (big은 '1'만 4px 커닝)
+  let adv: (Character) -> Int // letter spacing (in big, only '1' gets 4px kerning)
   let bw, bh, capw, gap, ggap, pad, lblgap, H, dy: Int
 }
 
@@ -59,7 +59,7 @@ func currentBattSize() -> String {
 
 private typealias RGB = (r: UInt8, g: UInt8, b: UInt8)
 
-// 논리 픽셀 캔버스 (SCALE=2 — 레티나 대비 2x 픽셀로 그림)
+// Logical pixel canvas (SCALE=2 — draws at 2x pixels for Retina)
 private final class Canvas {
   static let SCALE = 2
   let wl: Int, hl: Int, w: Int, h: Int
@@ -89,7 +89,7 @@ private final class Canvas {
     for j in 0 ..< rh { for i in 0 ..< rw { set(x + i, y + j, col) } }
   }
 
-  // 모서리 1px 비운 라운드 테두리
+  // Rounded border leaving 1px open at the corners
   func stroke(_ x: Int, _ y: Int, _ rw: Int, _ rh: Int, _ col: RGB) {
     for i in 1 ..< max(1, rw - 1) {
       set(x + i, y, col)
@@ -102,25 +102,25 @@ private final class Canvas {
   }
 }
 
-// 실제 macOS 배터리 인디케이터 색 (Apple HIG system colors)
+// Actual macOS battery indicator colors (Apple HIG system colors)
 private func heatRemain(_ r: Double, dark: Bool) -> RGB {
   if r <= 20 { return dark ? (255, 69, 58) : (255, 59, 48) } // systemRed
   if r < 50 { return dark ? (255, 214, 10) : (255, 204, 0) } // systemYellow
   return dark ? (48, 209, 88) : (52, 199, 89) // systemGreen
 }
 
-// 잔량 100% = 황금 배터리 (경고 노랑과 구분되는 투톤 골드)
+// 100% remaining = golden battery (a two-tone gold distinct from the warning yellow)
 func isGolden(_ remain: Double?) -> Bool { (remain ?? 0) >= 99.5 }
 private func goldBase(_ dark: Bool) -> RGB { dark ? (255, 184, 0) : (255, 170, 0) }
 private func goldHi(_ dark: Bool) -> RGB { dark ? (255, 226, 110) : (255, 214, 90) }
 
-// 글린트(광택) 스윕 전체 구간 — 대각선이 캡슐을 완전히 가로지르는 길이
+// Full span of the glint sweep — the length needed for the diagonal to fully cross the capsule
 func batteryGlintSpan() -> Int {
   let p = currentBattSize() == "small" ? PRESET_SMALL : PRESET_BIG
   return p.bw + p.bh
 }
 
-// altCol/boundaryX 지정 시: 픽셀 x가 채움 경계 왼쪽이면 altCol(밝은 채움 위 대비), 오른쪽이면 col
+// When altCol/boundaryX is set: if pixel x is left of the fill boundary, use altCol (contrast over the bright fill); if right, use col
 @discardableResult
 private func drawNum(_ cv: Canvas, _ p: Preset, _ x: Int, _ y: Int, _ str: String,
                      _ col: RGB, _ altCol: RGB? = nil, _ boundaryX: Int = 0) -> Int {
@@ -142,13 +142,13 @@ private func drawNum(_ cv: Canvas, _ p: Preset, _ x: Int, _ y: Int, _ str: Strin
 
 private func numW(_ p: Preset, _ s: String) -> Int { s.reduce(0) { $0 + p.adv($1) } - 1 }
 
-// 캡슐 하나: 테두리 + 잔량 채움 + 안에 잔량 숫자 (100 포함, 항상 표시)
-// 100%는 투톤 골드, glintX 지정 시 골드 캡슐 위로 대각선 광택 스윕
+// One capsule: border + remaining-fill + remaining number inside (100 included, always shown)
+// 100% is two-tone gold; when glintX is set, a diagonal glint sweep passes over the gold capsule
 private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
                          _ remain: Double?, _ ink: RGB, _ dark: Bool, _ glintX: Int?) {
   let by = midY - p.bh / 2
   cv.stroke(x, by, p.bw, p.bh, ink)
-  cv.rect(x + p.bw, by + 3, 2, p.bh - 6, ink) // 단자
+  cv.rect(x + p.bw, by + 3, 2, p.bh - 6, ink) // terminal
   guard let remain = remain else { return }
   let innerW = p.bw - 4
   let v = max(0, min(100, remain))
@@ -157,14 +157,14 @@ private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
   if fw > 0 {
     if golden {
       cv.rect(x + 2, by + 2, fw, p.bh - 4, goldBase(dark))
-      cv.rect(x + 2, by + 2, fw, 2, goldHi(dark)) // 상단 하이라이트
+      cv.rect(x + 2, by + 2, fw, 2, goldHi(dark)) // top highlight
     } else {
       cv.rect(x + 2, by + 2, fw, p.bh - 4, heatRemain(remain, dark: dark))
     }
   }
   if golden, let g = glintX {
     for j in 0 ..< (p.bh - 4) {
-      let gx = x + 2 + g - j // 대각선 (좌하향)
+      let gx = x + 2 + g - j // diagonal (down-left)
       if gx >= x + 2, gx < x + 2 + fw {
         cv.set(gx, by + 2 + j, (255, 255, 240))
         if gx + 1 < x + 2 + fw { cv.set(gx + 1, by + 2 + j, (255, 240, 170)) }
@@ -173,15 +173,15 @@ private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
   }
   let s = String(Int(v.rounded()))
   let tx = x + (p.bw - numW(p, s)) / 2
-  // 채움(밝은 system color) 위 픽셀은 어두운 숫자, 빈 배경 위는 ink → 어디서나 대비 확보
+  // Pixels over the fill (bright system color) get a dark number, over the empty background get ink → contrast is guaranteed everywhere
   drawNum(cv, p, tx, midY - p.dy, s, ink, (30, 30, 30), x + 2 + fw)
 }
 
-// 캡슐 N개 + 그룹 라벨(C/X) → NSImage (2x 픽셀, 표시 크기는 호출부에서 배율로 조정)
+// N capsules + group label (C/X) → NSImage (2x pixels; the caller scales down to the display size)
 func renderBatteryImage(dark: Bool, items: [BattItem], glintX: Int? = nil) -> NSImage? {
   let p = currentBattSize() == "small" ? PRESET_SMALL : PRESET_BIG
   let ink: RGB = dark ? (235, 235, 235) : (45, 45, 45)
-  // 폭 계산 (그룹 라벨 포함)
+  // Compute width (including group label)
   var W = p.pad * 2
   var pg: Character? = nil
   for item in items {
@@ -201,7 +201,7 @@ func renderBatteryImage(dark: Bool, items: [BattItem], glintX: Int? = nil) -> NS
     let g = item.label.first!
     if g != pg {
       if pg != nil { x += p.ggap }
-      drawNum(cv, p, x, midY - p.dy, String(g), ink) // 그룹 라벨 C 또는 X
+      drawNum(cv, p, x, midY - p.dy, String(g), ink) // group label C or X
       x += numW(p, String(g)) + p.lblgap
       pg = g
     } else { x += p.gap }

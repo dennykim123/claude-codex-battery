@@ -1,11 +1,11 @@
-// Claude & Codex Usage Battery — 완전 독립 네이티브 메뉴바 앱 (RunCat 스타일)
-// SwiftBar·bun 없이 단독 동작: 키체인/인증 파일 → usage API 직접 조회 → 배터리 렌더.
+// Claude & Codex Usage Battery — a fully standalone native menu bar app (RunCat style)
+// Runs independently without SwiftBar/bun: keychain/auth file → queries the usage API directly → renders the battery.
 import Cocoa
 import ServiceManagement
 
 let REFRESH_SECONDS = 120.0
 
-// SwiftBar가 같은 위젯 플러그인을 켜둔 상태면 배터리가 두 벌 표시됨 — 감지해서 경고
+// If SwiftBar has the same widget plugin enabled, the battery shows up twice — detect and warn
 func swiftBarDuplicate() -> Bool {
   guard FileManager.default.fileExists(atPath: "\(HOME)/.swiftbar-plugins/claude-codex-usage.2m.js"),
         !NSRunningApplication.runningApplications(withBundleIdentifier: "com.ameba.SwiftBar").isEmpty
@@ -14,7 +14,7 @@ func swiftBarDuplicate() -> Bool {
   return !disabled.contains("claude-codex-usage.2m.js")
 }
 
-// 데이터 일괄 수집 (백그라운드 스레드에서 호출)
+// Batch data collection (called from a background thread)
 func collectSnapshot() -> Snapshot {
   let now = Int(Date().timeIntervalSince1970)
   return Snapshot(now: now,
@@ -25,7 +25,7 @@ func collectSnapshot() -> Snapshot {
                   update: getUpdateInfo(now: now))
 }
 
-// 스냅샷 → 메뉴바 배터리 아이템 (위젯 JS 렌더링부와 동일 로직)
+// Snapshot → menu bar battery items (same logic as the widget JS's rendering code)
 func battItems(_ snap: Snapshot) -> [BattItem] {
   var items: [BattItem] = []
   if let u = snap.usage {
@@ -36,7 +36,7 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
     items.append(BattItem(label: "C5", remain: max(0, 100 - b.elapsedPct)))
   }
   if let cx = snap.codex, cx.primary != nil || cx.secondary != nil {
-    // 그때 활성인 창만 그린다 — 없는 창은 빈 캡슐 대신 생략
+    // Only draws whichever window is active at the time — a missing window is omitted rather than shown as an empty capsule
     if let p = windowState(cx.primary, now: snap.now) {
       items.append(BattItem(label: "X5", remain: max(0, 100 - p.pct)))
     }
@@ -44,18 +44,18 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
       items.append(BattItem(label: "XW", remain: max(0, 100 - s.pct)))
     }
   } else if let cr = snap.codex?.credits {
-    // premium 소진형: 있음=100 / 소진=0 / 무제한=100
+    // premium consumable-style: has credits=100 / exhausted=0 / unlimited=100
     let remain: Double = cr.unlimited ? 100 : (cr.hasCredits && (cr.balance ?? 0) > 0 ? 100 : 0)
     items.append(BattItem(label: "X", remain: remain))
   }
-  // 골든 배터리 시각 테스트용 (개발 전용)
+  // For visually testing the golden battery (dev only)
   if ProcessInfo.processInfo.environment["CCB_GOLD_TEST"] != nil {
     return items.map { BattItem(label: $0.label, remain: $0.remain == nil ? nil : 100) }
   }
   return items
 }
 
-// 시작 시퀀스: 왼쪽 배터리부터 순서대로 0 → 실제 잔량으로 차오름 (숫자도 카운트업)
+// Startup sequence: starting from the leftmost battery, fills from 0 → actual remaining value in order (the number counts up too)
 func introFrames(items: [BattItem], dark: Bool) -> [NSImage] {
   var out: [NSImage] = []
   let steps = 4
@@ -74,7 +74,7 @@ func introFrames(items: [BattItem], dark: Bool) -> [NSImage] {
   return out
 }
 
-// 황금 배터리 광택 스윕 (골든 캡슐이 하나라도 있을 때)
+// Golden battery glint sweep (when at least one capsule is golden)
 func glintFrames(items: [BattItem], dark: Bool) -> [NSImage] {
   guard items.contains(where: { isGolden($0.remain) }) else { return [] }
   var out: [NSImage] = []
@@ -88,7 +88,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   var statusItem: NSStatusItem!
   var timer: Timer?
   var glintTimer: Timer?
-  var lastSnap: Snapshot? // 마지막 수집 결과 — 크기·테마 변경은 재수집 없이 이걸로 즉시 재렌더
+  var lastSnap: Snapshot? // last collected result — size/theme changes re-render from this instantly without re-collecting
 
   var loginItemEnabled: Bool {
     if #available(macOS 13.0, *) { return SMAppService.mainApp.status == .enabled }
@@ -98,7 +98,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ n: Notification) {
     statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     statusItem.button?.title = "…"
-    // 다크/라이트 전환 시 배터리 색 갱신
+    // Refresh battery colors on dark/light mode switch
     DistributedNotificationCenter.default().addObserver(
       self, selector: #selector(rerender),
       name: NSNotification.Name("AppleInterfaceThemeChangedNotification"), object: nil)
@@ -106,14 +106,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     timer = Timer.scheduledTimer(withTimeInterval: REFRESH_SECONDS, repeats: true) { [weak self] _ in
       self?.refresh()
     }
-    // 황금 배터리 광택은 데이터 갱신과 별개로 30초마다 (재수집 없이 캐시 상태로 재생)
+    // The golden battery glint plays every 30s independently of data refresh (replays from cached state without re-collecting)
     let glintEvery = ProcessInfo.processInfo.environment["CCB_GLINT_SECONDS"].flatMap(Double.init) ?? 30.0
     glintTimer = Timer.scheduledTimer(withTimeInterval: glintEvery, repeats: true) { [weak self] _ in
       self?.playGoldenGlint()
     }
   }
 
-  // 캐시된 스냅샷 기준, 골든 배터리가 있으면 광택 스윕 한 번 재생
+  // Based on the cached snapshot, plays the glint sweep once if a golden battery is present
   func playGoldenGlint() {
     if ProcessInfo.processInfo.environment["CCB_DEBUG"] != nil {
       FileHandle.standardError.write(Data("glint tick: lastSnap=\(lastSnap != nil)\n".utf8))
@@ -128,7 +128,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     playFrames(frames, interval: interval)
   }
 
-  // 첫 실행에만: 로그인 시 자동 시작 등록 제안 (RunCat식 온보딩)
+  // First run only: prompts to register auto-start at login (RunCat-style onboarding)
   func firstRunAutoStartPrompt() {
     guard #available(macOS 13.0, *),
           !UserDefaults.standard.bool(forKey: "askedAutoStart"),
@@ -153,12 +153,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  // 데이터 재수집 없이 마지막 스냅샷으로 즉시 다시 그림 (크기·테마 변경용)
+  // Redraws immediately from the last snapshot without re-collecting data (for size/theme changes)
   @objc func rerender() {
     if let s = lastSnap { render(s) } else { refresh() }
   }
 
-  // 픽셀 크기 기준으로 디스플레이 배율을 나눠 표시 (레티나 ÷2, 1x 모니터 ÷1) — 재적용에도 안전
+  // Divides by the display scale factor based on pixel size (Retina ÷2, 1x monitor ÷1) — safe to reapply
   func setButtonImage(_ img: NSImage) {
     guard let btn = statusItem.button else { return }
     let scale = btn.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
@@ -171,7 +171,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     btn.image = img
   }
 
-  // 프레임 시퀀스 재생 — 마지막 프레임에서 멈춤
+  // Plays a frame sequence — stops on the last frame
   private var animTimer: Timer?
   func playFrames(_ frames: [NSImage], interval: TimeInterval) {
     animTimer?.invalidate()
@@ -192,7 +192,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     if let btn = statusItem.button {
       let dark = btn.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
       if !items.isEmpty, let finalImg = renderBatteryImage(dark: dark, items: items) {
-        // 시작 시퀀스(최초 1회) + 황금 배터리 광택 스윕(있을 때마다) → 마지막은 실제 상태
+        // Startup sequence (once only) + golden battery glint sweep (whenever present) → the last frame is the actual state
         var frames: [NSImage] = []
         if !introPlayed {
           introPlayed = true
@@ -203,7 +203,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
           setButtonImage(finalImg)
         } else {
           frames.append(finalImg)
-          // CCB_ANIM_INTERVAL: 프레임 간격 재정의 (검증·데모용)
+          // CCB_ANIM_INTERVAL: overrides the frame interval (for verification/demo)
           let interval = ProcessInfo.processInfo.environment["CCB_ANIM_INTERVAL"].flatMap(Double.init) ?? 0.045
           playFrames(frames, interval: interval)
         }
@@ -213,7 +213,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
     statusItem.menu = buildMenu(snap, swiftBarDup: swiftBarDuplicate(), target: self)
-    // --pop-menu: 첫 렌더 직후 메뉴를 스스로 펼침 (스크린샷·검증용 — 보조 접근 불필요)
+    // --pop-menu: pops the menu open by itself right after the first render (for screenshots/verification — no accessibility access needed)
     if CommandLine.arguments.contains("--pop-menu"), !menuPopped {
       menuPopped = true
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -221,7 +221,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
               let menu = self.statusItem.menu else { return }
         _ = (btn, win)
         NSApp.activate(ignoringOtherApps: true)
-        // 주 디스플레이(원점 0,0) 메뉴바 아래 고정 좌표에 펼침 — 멀티 모니터에서도 캡처 위치 고정
+        // Pops open at a fixed coordinate under the menu bar on the main display (origin 0,0) — keeps the capture position fixed even on multiple monitors
         let screen = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens[0]
         let pt = NSPoint(x: screen.frame.midX, y: screen.frame.maxY - 28)
         FileHandle.standardError.write(Data("popup: at \(pt)\n".utf8))
@@ -231,7 +231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
       return
     }
-    // 온보딩은 첫 렌더가 화면에 나간 뒤에 — 모달이 데이터 표시를 막지 않도록
+    // Onboarding runs only after the first render has hit the screen — so the modal doesn't block the data from showing
     if !promptShown {
       promptShown = true
       DispatchQueue.main.async { [weak self] in self?.firstRunAutoStartPrompt() }
@@ -253,17 +253,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private func setBattSize(_ s: String) {
     try? FileManager.default.createDirectory(atPath: STATE_DIR, withIntermediateDirectories: true)
     try? s.write(toFile: SIZE_FILE, atomically: true, encoding: .utf8)
-    rerender() // 렌더만 다시 — 데이터는 그대로라 즉시 반영
+    rerender() // re-render only — the data is unchanged so this reflects instantly
   }
 
   @objc func toggleLoginItem() {
     guard #available(macOS 13.0, *) else { return }
     let svc = SMAppService.mainApp
     if svc.status == .enabled { try? svc.unregister() } else { try? svc.register() }
-    rerender() // 체크마크만 갱신하면 됨 — 재수집 불필요
+    rerender() // only the checkmark needs updating — no need to re-collect
   }
 
-  // 원클릭 자동 업데이트 — 다운로드→서명 검증→자기 교체→재실행. 실패 시 릴리스 페이지 폴백
+  // One-click auto-update — download → verify signature → replace self → relaunch. Falls back to the releases page on failure
   @objc func selfUpdate(_ sender: NSMenuItem) {
     guard let v = sender.representedObject as? String else { return }
     statusItem.button?.image = nil
@@ -281,7 +281,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  // ccusage 대시보드를 터미널로 — .command 파일 경유 (권한 프롬프트 없이 Terminal 실행)
+  // Opens the ccusage dashboard in Terminal — via a .command file (runs Terminal without a permission prompt)
   @objc func openDashboard() {
     guard let bin = ccusagePath() else { return }
     let f = "\(STATE_DIR)/ccusage-dashboard.command"
@@ -293,7 +293,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 }
 
-// ── --render-glint <path>: 글린트 중간 프레임을 PNG로 저장 (렌더 검증용) ──
+// ── --render-glint <path>: saves an intermediate glint frame as PNG (for render verification) ──
 if let idx = CommandLine.arguments.firstIndex(of: "--render-glint"), CommandLine.arguments.count > idx + 1 {
   let items = [BattItem(label: "C5", remain: 100), BattItem(label: "CW", remain: 100),
                BattItem(label: "X5", remain: 100)]
@@ -306,7 +306,7 @@ if let idx = CommandLine.arguments.firstIndex(of: "--render-glint"), CommandLine
   exit(0)
 }
 
-// ── --self-update: 최신 버전 확인 후 즉시 설치 (헤드리스 검증·수동 업데이트용) ──
+// ── --self-update: checks the latest version and installs it immediately (for headless verification/manual updates) ──
 if CommandLine.arguments.contains("--self-update") {
   guard let latest = fetchLatestVersion() else { print("version check failed"); exit(1) }
   if cmpVer(latest, APP_VERSION) > 0 {
@@ -323,7 +323,7 @@ if CommandLine.arguments.contains("--self-update") {
   exit(0)
 }
 
-// ── --dump-menu: UI 없이 드롭다운 메뉴 구조를 텍스트로 출력 (검증용) ──
+// ── --dump-menu: prints the dropdown menu structure as text without UI (for verification) ──
 if CommandLine.arguments.contains("--dump-menu") {
   let snap = collectSnapshot()
   let d = AppDelegate()
@@ -340,7 +340,7 @@ if CommandLine.arguments.contains("--dump-menu") {
   exit(0)
 }
 
-// ── --dump: UI 없이 수집·렌더 데이터를 텍스트로 출력 (파이프라인 검증용) ──
+// ── --dump: prints collection/render data as text without UI (for pipeline verification) ──
 if CommandLine.arguments.contains("--dump") {
   let snap = collectSnapshot()
   print("now:", snap.now)
@@ -367,7 +367,7 @@ if CommandLine.arguments.contains("--dump") {
   exit(0)
 }
 
-// ── 이중 실행 방지 — 같은 번들 ID의 인스턴스가 이미 떠 있으면 조용히 종료 ──
+// ── Duplicate-launch guard — quits silently if an instance with the same bundle ID is already running ──
 let myID = Bundle.main.bundleIdentifier ?? "com.dennykim.claude-codex-battery-app"
 let myPID = ProcessInfo.processInfo.processIdentifier
 if NSRunningApplication.runningApplications(withBundleIdentifier: myID)
@@ -376,7 +376,7 @@ if NSRunningApplication.runningApplications(withBundleIdentifier: myID)
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory) // 메뉴바 전용 (Dock 아이콘 없음)
+app.setActivationPolicy(.accessory) // menu bar only (no Dock icon)
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()

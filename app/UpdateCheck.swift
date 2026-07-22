@@ -1,4 +1,4 @@
-// 업데이트 확인 — 24시간마다 GitHub VERSION을 백그라운드로 조용히 확인 (위젯과 동일 캐시)
+// Update check — silently checks GitHub VERSION in the background every 24h (same cache as the widget)
 import Foundation
 
 private let UPDATE_CACHE = "\(STATE_DIR)/.update-check.json"
@@ -16,7 +16,7 @@ func cmpVer(_ a: String, _ b: String) -> Int {
   return 0
 }
 
-// 최신 버전 즉시 조회 (자체 업데이트용 — 캐시 우회)
+// Fetch the latest version immediately (for self-update — bypasses cache)
 func fetchLatestVersion() -> String? {
   guard let d = httpGet(VERSION_URL, headers: [:], timeout: 8),
         let v = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
