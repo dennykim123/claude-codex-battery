@@ -63,6 +63,18 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
     row(menu, "Claude Code · " + tr("% left"), size: 13, color: GRAY)
     if let u = snap.usage {
       if let w = u.fiveHour { gaugeRow(menu, labels.five, pct: w.pct, resetText: resetText(w.resetsAt, now: now)) }
+      // Time-attack lap row: reach the reset (the finish line) before hitting 0%
+      if let w = u.fiveHour, let ra = w.resetsAt, ra > now {
+        let toFinish = fmtDur(ra - now)
+        let panicking = max(0, 100 - w.pct) < 12 && ra - now > 1800
+        if panicking {
+          row(menu, "🏁 " + trf("lap: %@ to the finish — projected empty ⚠", toFinish),
+              size: 11, color: "#f85149")
+        } else {
+          row(menu, "🏁 " + trf("lap: %@ to the finish — on pace ✓", toFinish),
+              size: 11, color: "#3fb950")
+        }
+      }
       if let w = u.weekly { gaugeRow(menu, labels.week, pct: w.pct, resetText: resetText(w.resetsAt, now: now)) }
       if let f = u.fable { gaugeRow(menu, f.model, pct: f.pct, resetText: resetText(f.resetsAt, now: now)) }
       if !u.live {
@@ -138,6 +150,15 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
   row(sizeMenu, tr("Small"), action: #selector(AppDelegate.setSizeSmall), target: target,
       state: size == "small" ? .on : .off)
   row(settings, tr("Battery size")).submenu = sizeMenu
+
+  let catMenu = NSMenu()
+  let curCat = currentCatStyle()
+  for (style, key) in [(CatStyle.none, "Off"), (.nyan, "Wide face"),
+                       (.slim, "Slim face"), (.slime, "Slime")] {
+    row(catMenu, tr(key), action: #selector(AppDelegate.setCatStyle(_:)), target: target,
+        repr: style.rawValue, state: curCat == style ? .on : .off)
+  }
+  row(settings, tr("Cat")).submenu = catMenu
 
   let langMenu = NSMenu()
   let saved = UserDefaults.standard.string(forKey: "uiLang") ?? "auto"

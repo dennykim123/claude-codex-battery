@@ -55,6 +55,22 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
   return items
 }
 
+// Cat state from the snapshot: burn rate → speed, projected depletion → panic
+// (CCB_CAT_TEST=sleep|walk|run|dash|panic forces a state for testing)
+func catState(_ snap: Snapshot) -> CatState {
+  if let t = ProcessInfo.processInfo.environment["CCB_CAT_TEST"],
+     let s = CatState(rawValue: t) { return s }
+  if let w = snap.usage?.fiveHour, let ra = w.resetsAt,
+     max(0, 100 - w.pct) < 12, ra - snap.now > 1800 { return .panic }
+  let items = battItems(snap)
+  if !items.isEmpty, items.allSatisfy({ isGolden($0.remain) }) { return .happy }
+  let cph = snap.block?.costPerHour ?? 0
+  if cph < 0.5 { return .sleep }
+  if cph < 8 { return .walk }
+  if cph < 40 { return .run }
+  return .dash
+}
+
 // Startup sequence: starting from the leftmost battery, fills from 0 → actual remaining value in order (the number counts up too)
 func introFrames(items: [BattItem], dark: Bool) -> [NSImage] {
   var out: [NSImage] = []
@@ -88,6 +104,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   var statusItem: NSStatusItem!
   var timer: Timer?
   var glintTimer: Timer?
+  var catTimer: Timer?
+  var catIdx = 0
   var lastSnap: Snapshot? // last collected result — size/theme changes re-render from this instantly without re-collecting
 
   var loginItemEnabled: Bool {
@@ -110,6 +128,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let glintEvery = ProcessInfo.processInfo.environment["CCB_GLINT_SECONDS"].flatMap(Double.init) ?? 30.0
     glintTimer = Timer.scheduledTimer(withTimeInterval: glintEvery, repeats: true) { [weak self] _ in
       self?.playGoldenGlint()
+    }
+  }
+
+  // Advance the cat one frame and redraw the icon only (menu untouched)
+  @objc func catTick() {
+    if currentCatStyle() == .none { return }
+    if animTimer?.isValid == true { return } // don't fight intro/glint playback
+    guard let snap = lastSnap, let btn = statusItem.button else { return }
+    catIdx += 1
+    let items = battItems(snap)
+    guard !items.isEmpty else { return }
+    let dark = btn.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    if let img = renderBatteryImage(dark: dark, items: items,
+                                    cat: catState(snap), catFrameIndex: catIdx) {
+      setButtonImage(img)
+    }
+  }
+
+  // Cat style choice from Settings → Cat
+  @objc func setCatStyle(_ sender: NSMenuItem) {
+    guard let raw = sender.representedObject as? String else { return }
+    UserDefaults.standard.set(raw, forKey: "catStyle")
+    rerender()
+  }
+
+  // (Re)start the cat cycle at the pace of the current state
+  func restartCatTimer(_ state: CatState) {
+    catTimer?.invalidate()
+    catTimer = Timer.scheduledTimer(withTimeInterval: catTickInterval(state), repeats: true) { [weak self] _ in
+      self?.catTick()
     }
   }
 
@@ -190,7 +238,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let items = battItems(snap)
     if let btn = statusItem.button {
       let dark = btn.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-      if !items.isEmpty, let finalImg = renderBatteryImage(dark: dark, items: items) {
+      let st = catState(snap)
+      if !items.isEmpty, let finalImg = renderBatteryImage(dark: dark, items: items,
+                                                           cat: st, catFrameIndex: catIdx) {
+        restartCatTimer(st)
         // Startup sequence (once only) + golden battery glint sweep (whenever present) → the last frame is the actual state
         var frames: [NSImage] = []
         if !introPlayed {

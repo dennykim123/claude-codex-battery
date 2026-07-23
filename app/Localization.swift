@@ -113,12 +113,36 @@ private let TR: [String: [String: String]] = [
     "zh-Hant": "一鍵安裝 v%@ 更新（目前 v%@）",
     "es": "Instalar actualización v%@ — un clic (actual v%@)",
   ],
+  "lap: %@ to the finish — on pace ✓": [
+    "ko": "랩: 결승선까지 %@ — 완주 페이스 ✓",
+    "ja": "ラップ: ゴールまで%@ — 完走ペース ✓",
+    "zh-Hans": "本圈：距终点 %@ — 可跑完 ✓",
+    "zh-Hant": "本圈：距終點 %@ — 可跑完 ✓",
+    "es": "vuelta: %@ a la meta — a buen ritmo ✓",
+  ],
+  "lap: %@ to the finish — projected empty ⚠": [
+    "ko": "랩: 결승선까지 %@ — 이대로면 방전 ⚠",
+    "ja": "ラップ: ゴールまで%@ — このままでは電池切れ ⚠",
+    "zh-Hans": "本圈：距终点 %@ — 预计将耗尽 ⚠",
+    "zh-Hant": "本圈：距終點 %@ — 預計將耗盡 ⚠",
+    "es": "vuelta: %@ a la meta — se agotará ⚠",
+  ],
   "Refresh": [
     "ko": "새로고침", "ja": "更新", "zh-Hans": "刷新", "zh-Hant": "重新整理", "es": "Actualizar",
   ],
   "Settings": [
     "ko": "설정", "ja": "設定", "zh-Hans": "设置", "zh-Hant": "設定", "es": "Ajustes",
   ],
+  "Cat": ["ko": "고양이", "ja": "ネコ", "zh-Hans": "猫", "zh-Hant": "貓", "es": "Gato"],
+  "Wide face": [
+    "ko": "넓적 얼굴 (볼터치)", "ja": "丸顔 (ほっぺ)", "zh-Hans": "圆脸（腮红）",
+    "zh-Hant": "圓臉（腮紅）", "es": "Cara ancha",
+  ],
+  "Slim face": [
+    "ko": "갸름 얼굴", "ja": "細顔", "zh-Hans": "瘦脸", "zh-Hant": "瘦臉", "es": "Cara fina",
+  ],
+  "Slime": ["ko": "슬라임", "ja": "スライム", "zh-Hans": "史莱姆", "zh-Hant": "史萊姆", "es": "Slime"],
+  "Off": ["ko": "끄기", "ja": "オフ", "zh-Hans": "关闭", "zh-Hant": "關閉", "es": "Desactivado"],
   "Battery size": [
     "ko": "배터리 크기", "ja": "バッテリーサイズ", "zh-Hans": "电池大小", "zh-Hant": "電池大小",
     "es": "Tamaño de batería",

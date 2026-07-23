@@ -177,12 +177,33 @@ private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
   drawNum(cv, p, tx, midY - p.dy, s, ink, (30, 30, 30), x + 2 + fw)
 }
 
+// Draw one cat frame into the canvas (shares ink with the batteries; accents fixed)
+private func drawCat(_ cv: Canvas, _ x: Int, _ y: Int, _ style: CatStyle, _ state: CatState, _ frame: Int, _ ink: RGB) {
+  let grid = catFrame(style, state, frame)
+  for (r, rowStr) in grid.enumerated() {
+    for (c, ch) in rowStr.enumerated() {
+      switch ch {
+      case "A", "z": cv.set(x + c, y + r, ink)
+      case "o": cv.set(x + c, y + r, (255, 150, 50))
+      case "r": cv.set(x + c, y + r, (255, 70, 60))
+      case "b": cv.set(x + c, y + r, (90, 180, 255))
+      case "p": cv.set(x + c, y + r, (255, 150, 170)) // Nyan-style pink blush
+      default: break
+      }
+    }
+  }
+}
+
 // N capsules + group label (C/X) → NSImage (2x pixels; the caller scales down to the display size)
-func renderBatteryImage(dark: Bool, items: [BattItem], glintX: Int? = nil) -> NSImage? {
+// With `cat`, a pixel cat runs at the left edge, facing its battery "finish line".
+func renderBatteryImage(dark: Bool, items: [BattItem], glintX: Int? = nil,
+                        cat: CatState? = nil, catFrameIndex: Int = 0) -> NSImage? {
   let p = currentBattSize() == "small" ? PRESET_SMALL : PRESET_BIG
   let ink: RGB = dark ? (235, 235, 235) : (45, 45, 45)
+  let catStyle = currentCatStyle()
+  let catSpan = (cat != nil && catStyle != .none) ? CAT_W + 3 : 0
   // Compute width (including group label)
-  var W = p.pad * 2
+  var W = p.pad * 2 + catSpan
   var pg: Character? = nil
   for item in items {
     let g = item.label.first!
@@ -196,6 +217,10 @@ func renderBatteryImage(dark: Bool, items: [BattItem], glintX: Int? = nil) -> NS
   let cv = Canvas(max(W, 8), p.H)
   let midY = p.H / 2
   var x = p.pad
+  if let c = cat, catStyle != .none {
+    drawCat(cv, x, max(0, (p.H - CAT_H) / 2), catStyle, c, catFrameIndex, ink)
+    x += catSpan
+  }
   pg = nil
   for item in items {
     let g = item.label.first!

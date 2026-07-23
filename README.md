@@ -77,6 +77,8 @@ It's a native Swift port of the same widget: identical battery rendering, identi
 
 **UI languages:** English · 한국어 · 日本語 · 简体中文 · 繁體中文 · Español — follows your system language, or pick one in **Settings → Language** (the SwiftBar plugin follows the same choice).
 
+**Optional pixel mascot** <img src="docs/cat-styles.png" align="right" width="120" alt="Mascot styles"> — **Settings → Cat** adds a tiny companion next to the batteries (off by default): a wide cat face with pink blush, a slim cat face, or an RPG slime. It emotes about your burn rate — asleep when idle, focused while you work, ears on fire during heavy burn, sweating when you're projected to hit 0% before the window resets, and sparkling when every battery is golden. The dropdown also gains a **🏁 lap row**: reach the 5-hour reset without running empty.
+
 ### Option 2 — SwiftBar plugin (single auditable script)
 
 ```bash
