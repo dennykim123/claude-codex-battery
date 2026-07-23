@@ -72,7 +72,7 @@ func catState(_ snap: Snapshot) -> CatState {
 }
 
 // Startup sequence: starting from the leftmost battery, fills from 0 → actual remaining value in order (the number counts up too)
-func introFrames(items: [BattItem], dark: Bool) -> [NSImage] {
+func introFrames(items: [BattItem], dark: Bool, cat: CatState) -> [NSImage] {
   var out: [NSImage] = []
   let steps = 4
   for i in 0 ..< items.count {
@@ -84,18 +84,18 @@ func introFrames(items: [BattItem], dark: Bool) -> [NSImage] {
           : it.remain == nil ? nil : 0
         return BattItem(label: it.label, remain: r)
       }
-      if let img = renderBatteryImage(dark: dark, items: frame) { out.append(img) }
+      if let img = renderBatteryImage(dark: dark, items: frame, cat: cat) { out.append(img) }
     }
   }
   return out
 }
 
 // Golden battery glint sweep (when at least one capsule is golden)
-func glintFrames(items: [BattItem], dark: Bool) -> [NSImage] {
+func glintFrames(items: [BattItem], dark: Bool, cat: CatState) -> [NSImage] {
   guard items.contains(where: { isGolden($0.remain) }) else { return [] }
   var out: [NSImage] = []
   for g in stride(from: 0, to: batteryGlintSpan() + 2, by: 2) {
-    if let img = renderBatteryImage(dark: dark, items: items, glintX: g) { out.append(img) }
+    if let img = renderBatteryImage(dark: dark, items: items, glintX: g, cat: cat) { out.append(img) }
   }
   return out
 }
@@ -169,7 +169,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     guard let snap = lastSnap, let btn = statusItem.button else { return }
     let items = battItems(snap)
     let dark = btn.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-    var frames = glintFrames(items: items, dark: dark)
+    var frames = glintFrames(items: items, dark: dark, cat: catState(snap))
     guard !frames.isEmpty, let final = renderBatteryImage(dark: dark, items: items) else { return }
     frames.append(final)
     let interval = ProcessInfo.processInfo.environment["CCB_ANIM_INTERVAL"].flatMap(Double.init) ?? 0.045
@@ -246,9 +246,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var frames: [NSImage] = []
         if !introPlayed {
           introPlayed = true
-          frames += introFrames(items: items, dark: dark)
+          frames += introFrames(items: items, dark: dark, cat: st)
         }
-        frames += glintFrames(items: items, dark: dark)
+        frames += glintFrames(items: items, dark: dark, cat: st)
         if frames.isEmpty {
           setButtonImage(finalImg)
         } else {

@@ -210,15 +210,28 @@ private let STYLE_FRAMES: [CatStyle: [CatState: [[String]]]] = [
 let CAT_W = 12 // logical pixels
 let CAT_H = 8
 
-// Frame-cycle interval per state
+// Frame-cycle interval per state — the spread IS the burn-rate speedometer
 func catTickInterval(_ s: CatState) -> TimeInterval {
   switch s {
-  case .sleep: return 0.9
-  case .walk: return 0.6
-  case .run: return 0.45
-  case .dash: return 0.2
+  case .sleep: return 1.0
+  case .walk: return 0.55
+  case .run: return 0.3
+  case .dash: return 0.12
   case .panic: return 0.15
-  case .happy: return 0.5
+  case .happy: return 0.4
+  }
+}
+
+// Motion offset per frame — makes the burn rate visible as movement, not just expression:
+// calm bobbing → brisk bobbing → horizontal vibration at heavy burn → happy hops
+func catMotionOffset(_ state: CatState, _ frame: Int) -> (dx: Int, dy: Int) {
+  switch state {
+  case .sleep: return (0, 0) // breathing lives in the frames (zz)
+  case .walk: return (0, frame % 2)
+  case .run: return (0, frame % 2)
+  case .dash: return (frame % 2, 0)
+  case .panic: return (0, 0) // frames already alternate a shifted grid
+  case .happy: return (0, frame % 2)
   }
 }
 
