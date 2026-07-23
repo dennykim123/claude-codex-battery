@@ -218,8 +218,7 @@ func renderBatteryImage(dark: Bool, items: [BattItem], glintX: Int? = nil,
   let midY = p.H / 2
   var x = p.pad
   if let c = cat, catStyle != .none {
-    let off = catMotionOffset(c, catFrameIndex)
-    drawCat(cv, x + off.dx, max(0, (p.H - CAT_H) / 2) + off.dy, catStyle, c, catFrameIndex, ink)
+    drawCat(cv, x, max(0, (p.H - CAT_H) / 2), catStyle, c, catFrameIndex, ink)
     x += catSpan
   }
   pg = nil

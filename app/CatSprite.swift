@@ -222,19 +222,6 @@ func catTickInterval(_ s: CatState) -> TimeInterval {
   }
 }
 
-// Motion offset per frame — makes the burn rate visible as movement, not just expression:
-// calm bobbing → brisk bobbing → horizontal vibration at heavy burn → happy hops
-func catMotionOffset(_ state: CatState, _ frame: Int) -> (dx: Int, dy: Int) {
-  switch state {
-  case .sleep: return (0, 0) // breathing lives in the frames (zz)
-  case .walk: return (0, frame % 2)
-  case .run: return (0, frame % 2)
-  case .dash: return (frame % 2, 0)
-  case .panic: return (0, 0) // frames already alternate a shifted grid
-  case .happy: return (0, frame % 2)
-  }
-}
-
 func catFrame(_ style: CatStyle, _ state: CatState, _ index: Int) -> [String] {
   let f = STYLE_FRAMES[style]?[state] ?? [NYAN_CALM]
   return f[index % f.count]
