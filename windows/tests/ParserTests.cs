@@ -110,7 +110,30 @@ public static class ParserTests
             if (Directory.Exists(cacheDirectory)) Directory.Delete(cacheDirectory, true);
         }
 
-        if (failures == 0) Console.WriteLine("Parser, refresh gate, and cache tests passed.");
+        MetricVisibilitySettings defaultVisibility = MetricVisibilitySettings.Parse(new string[0]);
+        AssertTrue(defaultVisibility.Get("claude5h"), "Visibility defaults Claude 5h to shown");
+        AssertTrue(defaultVisibility.Get("codexWeek"), "Visibility defaults Codex Week to shown");
+
+        MetricVisibilitySettings visibility = MetricVisibilitySettings.Parse(new string[]
+        {
+            "pinOpen=True",
+            "claude5h=False",
+            "fableWeek=False",
+            "codexWeek=not-a-bool",
+            "futureSetting=False"
+        });
+        AssertFalse(visibility.Get("claude5h"), "Visibility parses hidden Claude 5h");
+        AssertFalse(visibility.Get("fableWeek"), "Visibility parses hidden Fable Week");
+        AssertTrue(visibility.Get("codexWeek"), "Invalid visibility value preserves the default");
+
+        visibility.Set("codex5h", false);
+        MetricVisibilitySettings visibilityRoundTrip = MetricVisibilitySettings.Parse(visibility.ToLines());
+        AssertFalse(visibilityRoundTrip.Get("claude5h"), "Visibility round trip preserves Claude 5h");
+        AssertFalse(visibilityRoundTrip.Get("fableWeek"), "Visibility round trip preserves Fable Week");
+        AssertFalse(visibilityRoundTrip.Get("codex5h"), "Visibility round trip preserves Codex 5h");
+        AssertTrue(visibilityRoundTrip.Get("claudeWeek"), "Visibility round trip preserves shown rows");
+
+        if (failures == 0) Console.WriteLine("Parser, refresh gate, cache, and settings tests passed.");
         return failures == 0 ? 0 : 1;
     }
 

@@ -11,6 +11,7 @@ The Windows port is a dependency-free WinForms system-tray application for Windo
 - Clearly labeled session-log or cached values when a live Codex request is unavailable.
 - A compact tray icon and flyout; disconnected services and unavailable windows are hidden.
 - A draggable flyout that remembers its last position, with independent **Keep window open** and **Always on top** options.
+- A **Visible usage rows** setting for hiding individual Claude, Fable or Codex limits; selections persist across restarts.
 
 The app never invents fallback percentages. A missing or unrecognized response is shown as unavailable.
 
