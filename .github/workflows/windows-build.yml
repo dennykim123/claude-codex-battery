@@ -1,0 +1,31 @@
+name: Windows build
+
+on:
+  pull_request:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-build.yml"
+  push:
+    branches: [main]
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-build.yml"
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile application
+        shell: powershell
+        run: |
+          $csc = "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          & $csc /nologo /target:winexe /out:windows\ClaudeCodexBattery.exe /r:System.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll windows\ClaudeCodexBattery.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run parser tests
+        shell: powershell
+        run: |
+          $csc = "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          & $csc /nologo /target:exe /main:ParserTests /out:windows\ParserTests.exe /r:System.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll windows\ClaudeCodexBattery.cs windows\tests\ParserTests.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & windows\ParserTests.exe

@@ -3,13 +3,14 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white" alt="Platform: macOS">
+  <img src="https://img.shields.io/badge/Windows-experimental-0078D4?logo=windows&logoColor=white" alt="Windows: experimental">
   <img src="https://img.shields.io/badge/SwiftBar-plugin-FF9500" alt="SwiftBar plugin">
   <img src="https://img.shields.io/badge/runtime-bun-14151A?logo=bun&logoColor=white" alt="Runtime: bun">
   <img src="https://img.shields.io/badge/dependencies-none-brightgreen.svg" alt="Zero dependencies">
   <a href="https://github.com/dennykim123/claude-codex-battery/stargazers"><img src="https://img.shields.io/github/stars/dennykim123/claude-codex-battery?style=flat&logo=github" alt="GitHub stars"></a>
 </p>
 
-> A macOS menu bar widget that shows your remaining **Claude Code** and **Codex** usage limits as battery icons — so you never have to open `/usage` again.
+> A menu-bar and system-tray widget that shows your remaining **Claude Code** and **Codex** usage limits as battery icons — so you never have to open `/usage` again.
 
 <p align="center">
   <img src="docs/menubar@2x.png" alt="Menu bar battery widget" width="280">
@@ -63,6 +64,19 @@ Colors follow a traffic-light scale: green ≥ 50 % left, amber < 50 %, red < 20
 ---
 
 ## Install
+
+### Windows (experimental)
+
+The native Windows 10/11 system-tray port lives in [`windows/`](windows/). It compiles with the .NET Framework tools included with Windows and requires no Node.js, package manager or Visual Studio installation.
+
+```powershell
+cd windows
+.\install.ps1
+```
+
+See the [Windows documentation](windows/README.md) for optional start-at-login, privacy controls and uninstall instructions. Windows support is currently experimental; the macOS app remains the primary release.
+
+### macOS
 
 ### Option 1 — Native app (no SwiftBar, no bun)
 
