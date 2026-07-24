@@ -48,6 +48,68 @@ namespace ClaudeCodexBattery
         }
     }
 
+    internal class MetricVisibilitySettings
+    {
+        public bool Claude5h = true;
+        public bool ClaudeWeek = true;
+        public bool FableWeek = true;
+        public bool Codex5h = true;
+        public bool CodexWeek = true;
+
+        public bool Get(string key)
+        {
+            switch (key)
+            {
+                case "claude5h": return Claude5h;
+                case "claudeWeek": return ClaudeWeek;
+                case "fableWeek": return FableWeek;
+                case "codex5h": return Codex5h;
+                case "codexWeek": return CodexWeek;
+                default: return true;
+            }
+        }
+
+        public void Set(string key, bool value)
+        {
+            switch (key)
+            {
+                case "claude5h": Claude5h = value; break;
+                case "claudeWeek": ClaudeWeek = value; break;
+                case "fableWeek": FableWeek = value; break;
+                case "codex5h": Codex5h = value; break;
+                case "codexWeek": CodexWeek = value; break;
+            }
+        }
+
+        public static MetricVisibilitySettings Parse(string[] lines)
+        {
+            MetricVisibilitySettings settings = new MetricVisibilitySettings();
+            if (lines == null) return settings;
+
+            foreach (string line in lines)
+            {
+                string[] parts = line.Split(new char[] { '=' }, 2);
+                if (parts.Length != 2) continue;
+                bool value;
+                if (!bool.TryParse(parts[1], out value)) continue;
+                settings.Set(parts[0], value);
+            }
+            return settings;
+        }
+
+        public string[] ToLines()
+        {
+            return new string[]
+            {
+                "claude5h=" + Claude5h.ToString(),
+                "claudeWeek=" + ClaudeWeek.ToString(),
+                "fableWeek=" + FableWeek.ToString(),
+                "codex5h=" + Codex5h.ToString(),
+                "codexWeek=" + CodexWeek.ToString()
+            };
+        }
+    }
+
     public class Program
     {
         public static bool AutoShowOnStart = false;
@@ -198,6 +260,25 @@ namespace ClaudeCodexBattery
             skinSubMenu.DropDownItems.Add(itemClassic);
             menu.Items.Add(skinSubMenu);
 
+            ToolStripMenuItem visibleRowsSubMenu = new ToolStripMenuItem("Visible usage rows");
+            visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Claude 5h", "claude5h"));
+            visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Claude Week", "claudeWeek"));
+            visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Fable Week", "fableWeek"));
+            visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Codex 5h", "codex5h"));
+            visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Codex Week", "codexWeek"));
+            visibleRowsSubMenu.DropDownOpening += new EventHandler((s, e) =>
+            {
+                foreach (ToolStripItem child in visibleRowsSubMenu.DropDownItems)
+                {
+                    ToolStripMenuItem rowItem = child as ToolStripMenuItem;
+                    if (rowItem != null && rowItem.Tag is string)
+                    {
+                        rowItem.Checked = flyoutForm.IsMetricEnabled((string)rowItem.Tag);
+                    }
+                }
+            });
+            menu.Items.Add(visibleRowsSubMenu);
+
             menu.Items.Add("-");
             var pinWindowItem = new ToolStripMenuItem("Keep window open");
             pinWindowItem.Checked = flyoutForm != null && flyoutForm.PinOpen;
@@ -236,6 +317,23 @@ namespace ClaudeCodexBattery
                 menu.Closed += new ToolStripDropDownClosedEventHandler((s, e) => menu.Dispose());
             }
             return menu;
+        }
+
+        private ToolStripMenuItem CreateVisibilityMenuItem(string label, string key)
+        {
+            ToolStripMenuItem item = new ToolStripMenuItem(label);
+            item.Tag = key;
+            // The flyout creates its own settings menu while its constructor is
+            // still running, before TrayApplicationContext.flyoutForm is assigned.
+            item.Checked = flyoutForm == null || flyoutForm.IsMetricEnabled(key);
+            item.Click += new EventHandler((s, e) =>
+            {
+                if (flyoutForm == null) return;
+                bool enabled = !flyoutForm.IsMetricEnabled(key);
+                flyoutForm.SetMetricEnabled(key, enabled);
+                item.Checked = enabled;
+            });
+            return item;
         }
 
         public void ChangeSkin(MascotSkin skin)
@@ -986,6 +1084,7 @@ namespace ClaudeCodexBattery
         private int catAnimFrame;
         private readonly string windowSettingsFile;
         private readonly string windowPositionFile;
+        private MetricVisibilitySettings metricVisibility = new MetricVisibilitySettings();
 
         public FlyoutForm(TrayApplicationContext ctx)
         {
@@ -1195,11 +1294,11 @@ namespace ClaudeCodexBattery
 
         public void UpdateUI()
         {
-            bool hasClaude5h = TrayApplicationContext.Claude5h.State != ConnectionState.NotConnected;
-            bool hasClaudeWk = TrayApplicationContext.ClaudeWk.State != ConnectionState.NotConnected;
-            bool hasFableWk = TrayApplicationContext.FableWk.State != ConnectionState.NotConnected;
-            bool hasCodex5h = TrayApplicationContext.Codex5h.State != ConnectionState.NotConnected;
-            bool hasCodexWk = TrayApplicationContext.CodexWk.State != ConnectionState.NotConnected;
+            bool hasClaude5h = TrayApplicationContext.Claude5h.State != ConnectionState.NotConnected && metricVisibility.Claude5h;
+            bool hasClaudeWk = TrayApplicationContext.ClaudeWk.State != ConnectionState.NotConnected && metricVisibility.ClaudeWeek;
+            bool hasFableWk = TrayApplicationContext.FableWk.State != ConnectionState.NotConnected && metricVisibility.FableWeek;
+            bool hasCodex5h = TrayApplicationContext.Codex5h.State != ConnectionState.NotConnected && metricVisibility.Codex5h;
+            bool hasCodexWk = TrayApplicationContext.CodexWk.State != ConnectionState.NotConnected && metricVisibility.CodexWeek;
             bool hasClaude = hasClaude5h || hasClaudeWk || hasFableWk;
             bool hasCodex = hasCodex5h || hasCodexWk;
 
@@ -1281,7 +1380,8 @@ namespace ClaudeCodexBattery
             }
 
             lblHeader.Text = hasCodex && hasClaude ? "⚡ Claude · Codex" :
-                (hasClaude ? "⚡ Claude Limits" : "⚡ Codex Limits");
+                (hasClaude ? "⚡ Claude Limits" :
+                (hasCodex ? "⚡ Codex Limits" : "⚡ Usage Limits"));
             this.Invalidate();
         }
 
@@ -1392,6 +1492,18 @@ namespace ClaudeCodexBattery
             SaveWindowSettings();
         }
 
+        public bool IsMetricEnabled(string key)
+        {
+            return metricVisibility.Get(key);
+        }
+
+        public void SetMetricEnabled(string key, bool enabled)
+        {
+            metricVisibility.Set(key, enabled);
+            SaveWindowSettings();
+            UpdateUI();
+        }
+
         private void BeginWindowDrag(object sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left) return;
@@ -1406,6 +1518,7 @@ namespace ClaudeCodexBattery
             {
                 if (!File.Exists(windowSettingsFile)) return;
                 string[] lines = File.ReadAllLines(windowSettingsFile);
+                metricVisibility = MetricVisibilitySettings.Parse(lines);
                 foreach (string line in lines)
                 {
                     string[] parts = line.Split(new char[] { '=' }, 2);
@@ -1428,11 +1541,11 @@ namespace ClaudeCodexBattery
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(windowSettingsFile));
-                File.WriteAllLines(windowSettingsFile, new string[]
-                {
-                    "pinOpen=" + PinOpen.ToString(),
-                    "alwaysOnTop=" + AlwaysOnTopEnabled.ToString()
-                });
+                List<string> lines = new List<string>();
+                lines.Add("pinOpen=" + PinOpen.ToString());
+                lines.Add("alwaysOnTop=" + AlwaysOnTopEnabled.ToString());
+                lines.AddRange(metricVisibility.ToLines());
+                File.WriteAllLines(windowSettingsFile, lines.ToArray());
             }
             catch { }
         }
