@@ -76,6 +76,8 @@ cd windows
 
 See the [Windows documentation](windows/README.md) for optional start-at-login, privacy controls and uninstall instructions. Windows support is currently experimental; the macOS app remains the primary release.
 
+**Windows contributors:** [@daehyeonxyz](https://github.com/daehyeonxyz) — initial Windows prototype ([#3](https://github.com/dennykim123/claude-codex-battery/pull/3)) · [@johnjheejin](https://github.com/johnjheejin) — production port and stabilization ([#5](https://github.com/dennykim123/claude-codex-battery/pull/5))
+
 ### macOS
 
 ### Option 1 — Native app (no SwiftBar, no bun)
