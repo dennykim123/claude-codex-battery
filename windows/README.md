@@ -1,34 +1,56 @@
-# Native Windows Port (`windows/`) for Claude & Codex Battery
+# Windows app (experimental)
 
-A zero-dependency Windows System Tray application showing your remaining Claude Code & Codex usage limits as dual battery gauges.
+The Windows port is a dependency-free WinForms system-tray application for Windows 10/11. It is built from the auditable C# source with the .NET Framework compiler included with Windows.
 
-![Windows Flyout Screenshot](./docs/screenshot.png)
+![Windows flyout](./docs/screenshot.png)
 
-## Features
-- **Zero-Dependency**: Compiles using `csc.exe` bundled in every Windows installation (.NET Framework 4.x). No Node.js, npm, or extra SDKs required.
-- **Dual Battery Gauges**: Real-time GDI+ battery gauges drawn directly in your System Tray icon (`C` for Claude, `X` for Codex).
-- **Windows 11 Acrylic Flyout**: Click the tray icon for a modern dark dashboard showing 5-hour & weekly limits, percentage remaining, reset countdowns, and data status.
-- **Live OAuth APIs & Automatic Fallbacks**:
-  - **Claude Code**: Queries `api.anthropic.com/api/oauth/usage` via local credentials (`%USERPROFILE%\.claude\.credentials.json`). Automatically falls back to local cache if offline.
-  - **Codex**: Queries live ChatGPT Wham API (`chatgpt.com/backend-api/wham/usage`) via `%USERPROFILE%\.codex\auth.json`. Automatically falls back to session log parsing (`%USERPROFILE%\.codex\sessions\*.jsonl`).
+## What it shows
 
-## Quick Installation
+- Claude 5-hour and weekly remaining percentages from Anthropic's OAuth usage endpoint.
+- Codex 5-hour and weekly remaining percentages from ChatGPT's account usage endpoint.
+- Clearly labeled session-log or cached values when a live Codex request is unavailable.
+- A compact tray icon and flyout; disconnected services and unavailable windows are hidden.
+- A draggable flyout that remembers its last position, with independent **Keep window open** and **Always on top** options.
 
-Open PowerShell and run:
+The app never invents fallback percentages. A missing or unrecognized response is shown as unavailable.
+
+## Install
+
+From PowerShell in this directory:
 
 ```powershell
-cd windows
 .\install.ps1
 ```
 
-`install.ps1` will automatically:
-1. Compile `ClaudeCodexBattery.cs` into `ClaudeCodexBattery.exe` using Windows built-in `csc.exe`.
-2. Add the app to Windows Startup (`HKCU\...\Run`).
-3. Launch the application immediately.
-
-## Uninstallation
+This compiles and installs the app to `%LOCALAPPDATA%\ClaudeCodexBattery`, then launches it. Start-at-login is off by default. Enable it from the tray Settings menu, or during installation:
 
 ```powershell
-cd windows
+.\install.ps1 -EnableAutoStart
+```
+
+Use `-NoLaunch` to build and install without starting the app. Reinstallation preserves the existing start-at-login preference; pass `-DisableAutoStart` to turn it off explicitly.
+
+## Privacy
+
+For live usage, the app reads the existing Claude Code login from `%USERPROFILE%\.claude\.credentials.json` and the existing Codex login from `%USERPROFILE%\.codex\auth.json`. OAuth tokens are sent only to:
+
+- `https://api.anthropic.com/api/oauth/usage`
+- `https://chatgpt.com/backend-api/wham/usage`
+
+Tokens are not written to the app's cache. Successful usage responses are cached under `%USERPROFILE%\.claude\swiftbar` for offline display. Create `%USERPROFILE%\.claude\swiftbar\.no-live` to disable both live requests and credential access.
+
+## Uninstall
+
+```powershell
 .\uninstall.ps1
 ```
+
+The default uninstaller stops the app, removes the login-start entry and deletes the installed executable. To also remove Windows-specific cached usage and the selected skin:
+
+```powershell
+.\uninstall.ps1 -RemoveCachedUsage
+```
+
+## Development
+
+The app targets C# 5 and uses only .NET Framework assemblies. Pull requests run a Windows build plus fixture-based parser tests. Do not commit compiled `.exe` files.

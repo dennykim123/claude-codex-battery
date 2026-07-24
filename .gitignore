@@ -1,3 +1,5 @@
 .DS_Store
 *.log
 .codex-refresh-ts
+windows/build/
+windows/*.exe

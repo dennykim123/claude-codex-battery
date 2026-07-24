@@ -1,13 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -51,10 +52,21 @@ namespace ClaudeCodexBattery
     {
         public static bool AutoShowOnStart = false;
         public static bool PinWindow = false;
+        private static Mutex singleInstanceMutex;
 
         [STAThread]
         public static void Main(string[] args)
         {
+            bool createdNew;
+            singleInstanceMutex = new Mutex(true, @"Local\ClaudeCodexBattery.SingleInstance", out createdNew);
+            if (!createdNew)
+            {
+                singleInstanceMutex.Dispose();
+                return;
+            }
+
+            try
+            {
             if (args != null && args.Length > 0)
             {
                 foreach (var arg in args)
@@ -73,13 +85,20 @@ namespace ClaudeCodexBattery
             // Enable TLS 1.2 for modern HTTPS endpoints
             try
             {
-                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)768 | SecurityProtocolType.Tls;
+                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; // TLS 1.2
             }
             catch { }
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new TrayApplicationContext());
+            }
+            finally
+            {
+                try { singleInstanceMutex.ReleaseMutex(); }
+                catch (ApplicationException) { }
+                singleInstanceMutex.Dispose();
+            }
         }
     }
 
@@ -90,11 +109,19 @@ namespace ClaudeCodexBattery
         private System.Windows.Forms.Timer refreshTimer;
         private System.Windows.Forms.Timer animTimer;
         private int animFrame = 0;
+        private int refreshInProgress;
 
         public static BatteryData Claude5h = new BatteryData { Name = "Claude 5h", WindowLabel = "C5" };
         public static BatteryData ClaudeWk = new BatteryData { Name = "Claude Week", WindowLabel = "CW" };
-        public static BatteryData Codex5h = new BatteryData { Name = "Codex Usage", WindowLabel = "X5" };
+        public static BatteryData FableWk = new BatteryData { Name = "Fable Week", WindowLabel = "FW" };
+        public static BatteryData Codex5h = new BatteryData { Name = "Codex 5h", WindowLabel = "X5" };
+        public static BatteryData CodexWk = new BatteryData { Name = "Codex Week", WindowLabel = "XW" };
         public static MascotSkin CurrentSkin = MascotSkin.Slime;
+
+        internal TrayApplicationContext(bool skipInitialization)
+        {
+            // Parser tests use this constructor to avoid creating UI or making network requests.
+        }
 
         public TrayApplicationContext()
         {
@@ -108,14 +135,14 @@ namespace ClaudeCodexBattery
 
             trayIcon.Click += TrayIcon_Click;
 
-            ContextMenuStrip menu = CreateContextMenu();
-            trayIcon.ContextMenuStrip = menu;
-
             flyoutForm = new FlyoutForm(this);
             if (Program.PinWindow)
             {
-                flyoutForm.PinOpen = true;
+                flyoutForm.SetPinOpen(true);
             }
+
+            ContextMenuStrip menu = CreateContextMenu(false);
+            trayIcon.ContextMenuStrip = menu;
 
             // Synchronous initial fetch
             FetchClaudeUsage();
@@ -135,26 +162,22 @@ namespace ClaudeCodexBattery
             {
                 animFrame = (animFrame + 1) % 4;
                 UpdateTrayIcon();
-                if (flyoutForm != null && flyoutForm.Visible)
-                {
-                    flyoutForm.Invalidate();
-                }
+                if (flyoutForm != null && flyoutForm.Visible) flyoutForm.Invalidate();
             });
             animTimer.Start();
 
             if (Program.AutoShowOnStart)
             {
-                Task.Delay(200).ContinueWith(t =>
-                {
-                    if (flyoutForm != null && !flyoutForm.IsDisposed)
-                    {
-                        flyoutForm.Invoke(new Action(() => flyoutForm.ShowNearTray(trayIcon)));
-                    }
-                });
+                flyoutForm.ShowNearTray(trayIcon);
             }
         }
 
         public ContextMenuStrip CreateContextMenu()
+        {
+            return CreateContextMenu(false);
+        }
+
+        public ContextMenuStrip CreateContextMenu(bool disposeOnClose)
         {
             ContextMenuStrip menu = new ContextMenuStrip();
             menu.BackColor = Color.FromArgb(24, 26, 38);
@@ -176,17 +199,42 @@ namespace ClaudeCodexBattery
             menu.Items.Add(skinSubMenu);
 
             menu.Items.Add("-");
+            var pinWindowItem = new ToolStripMenuItem("Keep window open");
+            pinWindowItem.Checked = flyoutForm != null && flyoutForm.PinOpen;
+            pinWindowItem.Click += new EventHandler((s, e) =>
+            {
+                bool enabled = !flyoutForm.PinOpen;
+                flyoutForm.SetPinOpen(enabled);
+                pinWindowItem.Checked = enabled;
+            });
+            menu.Items.Add(pinWindowItem);
+
+            var alwaysOnTopItem = new ToolStripMenuItem("Always on top");
+            alwaysOnTopItem.Checked = flyoutForm != null && flyoutForm.AlwaysOnTopEnabled;
+            alwaysOnTopItem.Click += new EventHandler((s, e) =>
+            {
+                bool enabled = !flyoutForm.AlwaysOnTopEnabled;
+                flyoutForm.SetAlwaysOnTop(enabled);
+                alwaysOnTopItem.Checked = enabled;
+            });
+            menu.Items.Add(alwaysOnTopItem);
+
+            menu.Items.Add("-");
             var autoStartItem = new ToolStripMenuItem("Start at Windows Login");
             autoStartItem.Checked = IsAutoStartEnabled();
             autoStartItem.Click += new EventHandler((s, e) =>
             {
-                bool newState = !autoStartItem.Checked;
-                SetAutoStart(newState);
-                autoStartItem.Checked = newState;
+                bool enabled = !IsAutoStartEnabled();
+                SetAutoStart(enabled);
+                autoStartItem.Checked = enabled;
             });
             menu.Items.Add(autoStartItem);
             menu.Items.Add("-");
             menu.Items.Add("Exit", null, new EventHandler((s, e) => ExitApp()));
+            if (disposeOnClose)
+            {
+                menu.Closed += new ToolStripDropDownClosedEventHandler((s, e) => menu.Dispose());
+            }
             return menu;
         }
 
@@ -242,36 +290,57 @@ namespace ClaudeCodexBattery
 
         public void RefreshData()
         {
+            if (!TryBeginRefresh()) return;
+
             Task.Run(new Action(() =>
             {
-                FetchClaudeUsage();
-                FetchCodexUsage();
-
-                if (flyoutForm != null && !flyoutForm.IsDisposed)
+                try
                 {
-                    flyoutForm.Invoke(new Action(() =>
+                    FetchClaudeUsage();
+                    FetchCodexUsage();
+
+                    if (flyoutForm != null && !flyoutForm.IsDisposed && flyoutForm.IsHandleCreated)
                     {
-                        UpdateTrayIcon();
-                        flyoutForm.UpdateUI();
-                    }));
+                        flyoutForm.Invoke(new Action(() =>
+                        {
+                            UpdateTrayIcon();
+                            flyoutForm.UpdateUI();
+                        }));
+                    }
                 }
+                catch (InvalidOperationException) { }
+                finally { EndRefresh(); }
             }));
+        }
+
+        internal bool TryBeginRefresh()
+        {
+            return Interlocked.CompareExchange(ref refreshInProgress, 1, 0) == 0;
+        }
+
+        internal void EndRefresh()
+        {
+            Interlocked.Exchange(ref refreshInProgress, 0);
         }
 
         private void UpdateTrayIcon()
         {
-            bool hasClaude = (Claude5h.State != ConnectionState.NotConnected);
-            bool hasCodex = (Codex5h.State != ConnectionState.NotConnected);
-            int activePct = hasCodex ? Codex5h.PercentLeft : (hasClaude ? Claude5h.PercentLeft : -1);
+            bool hasClaude = (Claude5h.State != ConnectionState.NotConnected || ClaudeWk.State != ConnectionState.NotConnected);
+            bool hasCodex = (Codex5h.State != ConnectionState.NotConnected || CodexWk.State != ConnectionState.NotConnected);
+            int activePct = Codex5h.PercentLeft >= 0 ? Codex5h.PercentLeft :
+                            CodexWk.PercentLeft >= 0 ? CodexWk.PercentLeft :
+                            Claude5h.PercentLeft >= 0 ? Claude5h.PercentLeft : ClaudeWk.PercentLeft;
 
             StringBuilder tooltip = new StringBuilder();
             if (hasCodex)
             {
-                tooltip.AppendLine(string.Format("Codex: {0}% left (resets {1})", Codex5h.PercentLeft, Codex5h.ResetTimeStr));
+                BatteryData codexTip = Codex5h.PercentLeft >= 0 ? Codex5h : CodexWk;
+                tooltip.AppendLine(string.Format("Codex: {0}% left (resets {1})", codexTip.PercentLeft, codexTip.ResetTimeStr));
             }
             if (hasClaude)
             {
-                tooltip.AppendLine(string.Format("Claude: {0}% left (resets {1})", Claude5h.PercentLeft, Claude5h.ResetTimeStr));
+                BatteryData claudeTip = Claude5h.PercentLeft >= 0 ? Claude5h : ClaudeWk;
+                tooltip.AppendLine(string.Format("Claude: {0}% left (resets {1})", claudeTip.PercentLeft, claudeTip.ResetTimeStr));
             }
             if (!hasCodex && !hasClaude)
             {
@@ -280,7 +349,9 @@ namespace ClaudeCodexBattery
             tooltip.Append("Click to open dashboard");
 
             string tipStr = tooltip.ToString();
-            if (tipStr.Length > 127) tipStr = tipStr.Substring(0, 127);
+            // NotifyIcon.Text is limited to 63 characters on .NET Framework/Windows.
+            // Both services together can exceed it and otherwise crash during startup.
+            if (tipStr.Length > 63) tipStr = tipStr.Substring(0, 63);
             trayIcon.Text = tipStr;
 
             using (Bitmap bmp = new Bitmap(32, 32))
@@ -297,12 +368,14 @@ namespace ClaudeCodexBattery
                         {
                             g.FillPath(bgBrush, path);
                         }
-                        DrawGauge(g, 3, 3, 11, 26, Claude5h.PercentLeft, "C");
-                        DrawGauge(g, 18, 3, 11, 26, Codex5h.PercentLeft, "X");
+                        int claudePct = Claude5h.PercentLeft >= 0 ? Claude5h.PercentLeft : ClaudeWk.PercentLeft;
+                        int codexPct = Codex5h.PercentLeft >= 0 ? Codex5h.PercentLeft : CodexWk.PercentLeft;
+                        DrawGauge(g, 3, 3, 11, 26, claudePct, "C");
+                        DrawGauge(g, 18, 3, 11, 26, codexPct, "X");
                     }
                     else
                     {
-                        int pct = activePct >= 0 ? activePct : 100;
+                        int pct = activePct;
 
                         if (CurrentSkin == MascotSkin.Slime)
                         {
@@ -321,8 +394,10 @@ namespace ClaudeCodexBattery
                     using (Icon icon = Icon.FromHandle(hIcon))
                     {
                         Icon cloned = (Icon)icon.Clone();
+                        Icon previous = trayIcon.Icon;
                         trayIcon.Icon = cloned;
                         trayIcon.Visible = true;
+                        if (previous != null) previous.Dispose();
                     }
                 }
                 finally
@@ -368,9 +443,10 @@ namespace ClaudeCodexBattery
 
         public static void DrawFullSizeSlime(Graphics g, int x, int y, int pct, int frame)
         {
-            Color slimeColor = pct >= 50 ? Color.FromArgb(46, 204, 113) :
-                               pct >= 20 ? Color.FromArgb(241, 196, 15) :
-                                           Color.FromArgb(231, 76, 60);
+            int moodPct = pct < 0 ? 50 : pct;
+            Color slimeColor = pct < 0 ? Color.FromArgb(125, 130, 145) :
+                               pct >= 50 ? Color.FromArgb(46, 204, 113) :
+                               pct >= 20 ? Color.FromArgb(241, 196, 15) : Color.FromArgb(231, 76, 60);
 
             Color slimeHighlight = Color.FromArgb(Math.Min(255, slimeColor.R + 70), Math.Min(255, slimeColor.G + 70), Math.Min(255, slimeColor.B + 70));
             Color eyeCol = Color.FromArgb(20, 20, 30);
@@ -386,7 +462,7 @@ namespace ClaudeCodexBattery
                 g.FillEllipse(bodyB, x, y + 3 + bounceY, 28, 23 - bounceY);
                 g.FillEllipse(highB, x + 4, y + 5 + bounceY, 8, 5);
 
-                if (pct >= 50)
+                if (moodPct >= 50)
                 {
                     if (frame == 2)
                     {
@@ -401,7 +477,7 @@ namespace ClaudeCodexBattery
                     g.FillRectangle(pinkB, x + 4, y + 13 + bounceY, 4, 3);
                     g.FillRectangle(pinkB, x + 20, y + 13 + bounceY, 4, 3);
                 }
-                else if (pct >= 20)
+                else if (moodPct >= 20)
                 {
                     g.FillRectangle(eyeB, x + 7, y + 10 + bounceY, 4, 4);
                     g.FillRectangle(eyeB, x + 17, y + 10 + bounceY, 4, 4);
@@ -422,11 +498,12 @@ namespace ClaudeCodexBattery
 
         public static void DrawFullSizeCat(Graphics g, int x, int y, int pct, int frame)
         {
-            Color catBody = Color.FromArgb(250, 245, 240);
+            int moodPct = pct < 0 ? 50 : pct;
+            Color catBody = pct < 0 ? Color.FromArgb(150, 154, 166) : Color.FromArgb(250, 245, 240);
             Color pink = Color.FromArgb(255, 130, 170);
             Color eyeCol = Color.FromArgb(25, 25, 35);
 
-            int bounceY = (frame % 2 == 1 && pct >= 50) ? -1 : 0;
+            int bounceY = (frame % 2 == 1 && moodPct >= 50) ? -1 : 0;
 
             using (SolidBrush bodyB = new SolidBrush(catBody))
             using (SolidBrush pinkB = new SolidBrush(pink))
@@ -442,7 +519,7 @@ namespace ClaudeCodexBattery
                 g.FillRectangle(pinkB, x + 3, y + 14 + bounceY, 5, 3);
                 g.FillRectangle(pinkB, x + 20, y + 14 + bounceY, 5, 3);
 
-                if (pct >= 50)
+                if (moodPct >= 50)
                 {
                     if (frame == 2)
                     {
@@ -456,7 +533,7 @@ namespace ClaudeCodexBattery
                     }
                     g.FillRectangle(pinkB, x + 12, y + 14 + bounceY, 4, 2);
                 }
-                else if (pct >= 20)
+                else if (moodPct >= 20)
                 {
                     g.FillRectangle(eyeB, x + 6, y + 11 + bounceY, 4, 4);
                     g.FillRectangle(eyeB, x + 18, y + 11 + bounceY, 4, 4);
@@ -512,158 +589,40 @@ namespace ClaudeCodexBattery
             return path;
         }
 
+        private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
+
         private void FetchClaudeUsage()
         {
             string userDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string stateDir = Path.Combine(userDir, ".claude", "swiftbar");
             string credFile = Path.Combine(userDir, ".claude", ".credentials.json");
-            string cacheFile = Path.Combine(userDir, ".claude", "swiftbar", ".claude-cache.json");
-
+            string cacheFile = Path.Combine(stateDir, ".claude-usage-windows.json");
+            string noLiveFile = Path.Combine(stateDir, ".no-live");
             bool success = false;
 
-            if (File.Exists(credFile))
+            SetUnavailable(Claude5h, "Not connected");
+            SetUnavailable(ClaudeWk, "Not connected");
+            SetUnavailable(FableWk, "Not connected");
+
+            if (!File.Exists(noLiveFile) && File.Exists(credFile))
             {
                 try
                 {
-                    string content = File.ReadAllText(credFile);
-                    string token = MatchJsonValue(content, "accessToken");
-                    if (string.IsNullOrEmpty(token)) token = MatchJsonValue(content, "token");
-
+                    IDictionary<string, object> credentials = ParseObject(File.ReadAllText(credFile));
+                    string token = GetString(GetValue(GetObject(credentials, "claudeAiOauth"), "accessToken"));
                     if (!string.IsNullOrEmpty(token))
                     {
-                        HttpWebRequest req = (HttpWebRequest)WebRequest.Create("https://api.anthropic.com/api/oauth/usage");
-                        req.Headers.Add("Authorization", "Bearer " + token);
-                        req.UserAgent = "claude-codex-battery-win/1.0";
-                        req.Timeout = 5000;
-
+                        HttpWebRequest req = CreateRequest("https://api.anthropic.com/api/oauth/usage", token);
+                        req.Headers.Add("anthropic-beta", "oauth-2025-04-20");
                         using (WebResponse resp = req.GetResponse())
                         using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
                         {
                             string json = sr.ReadToEnd();
-                            ParseClaudeJson(json, ConnectionState.Connected);
-                            Directory.CreateDirectory(Path.GetDirectoryName(cacheFile));
-                            File.WriteAllText(cacheFile, json);
-                            success = true;
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            if (!success && File.Exists(cacheFile))
-            {
-                try
-                {
-                    string cachedJson = File.ReadAllText(cacheFile);
-                    ParseClaudeJson(cachedJson, ConnectionState.OfflineCached);
-                    success = true;
-                }
-                catch { }
-            }
-
-            if (!success)
-            {
-                Claude5h.PercentLeft = -1;
-                Claude5h.ResetTimeStr = "Not Logged In";
-                Claude5h.State = ConnectionState.NotConnected;
-                Claude5h.SourceInfo = "Not Connected";
-
-                ClaudeWk.PercentLeft = -1;
-                ClaudeWk.ResetTimeStr = "Not Logged In";
-                ClaudeWk.State = ConnectionState.NotConnected;
-                ClaudeWk.SourceInfo = Claude5h.SourceInfo;
-            }
-        }
-
-        private void ParseClaudeJson(string json, ConnectionState state)
-        {
-            int? p5 = ExtractInt(json, "five_hour_percent");
-            if (!p5.HasValue) p5 = ExtractInt(json, "percent_remaining");
-            int pct5 = p5.HasValue ? p5.Value : 80;
-
-            int? pWk = ExtractInt(json, "weekly_percent");
-            int pctWk = pWk.HasValue ? pWk.Value : 90;
-
-            Claude5h.PercentLeft = Math.Max(0, Math.Min(100, pct5));
-            string r5 = ExtractString(json, "five_hour_reset");
-            Claude5h.ResetTimeStr = !string.IsNullOrEmpty(r5) ? r5 : "2h 30m";
-            Claude5h.State = state;
-            Claude5h.SourceInfo = state == ConnectionState.Connected ? "Live Anthropic OAuth API" : "Cached Response";
-            Claude5h.LastUpdated = DateTime.Now;
-
-            ClaudeWk.PercentLeft = Math.Max(0, Math.Min(100, pctWk));
-            string rWk = ExtractString(json, "weekly_reset");
-            ClaudeWk.ResetTimeStr = !string.IsNullOrEmpty(rWk) ? rWk : "4d 12h";
-            ClaudeWk.State = state;
-            ClaudeWk.SourceInfo = Claude5h.SourceInfo;
-            ClaudeWk.LastUpdated = DateTime.Now;
-        }
-
-        private void FetchCodexUsage()
-        {
-            string userDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            string authFile = Path.Combine(userDir, ".codex", "auth.json");
-            string cacheFile = Path.Combine(userDir, ".claude", "swiftbar", ".codex-cache.json");
-            string sessionsDir = Path.Combine(userDir, ".codex", "sessions");
-
-            bool success = false;
-
-            if (File.Exists(authFile))
-            {
-                try
-                {
-                    string content = File.ReadAllText(authFile);
-                    string token = MatchJsonValue(content, "access_token");
-                    if (string.IsNullOrEmpty(token)) token = MatchJsonValue(content, "token");
-
-                    if (!string.IsNullOrEmpty(token))
-                    {
-                        HttpWebRequest req = (HttpWebRequest)WebRequest.Create("https://chatgpt.com/backend-api/wham/usage");
-                        req.Headers.Add("Authorization", "Bearer " + token);
-                        req.UserAgent = "claude-codex-battery-win/1.0";
-                        req.Timeout = 5000;
-
-                        using (WebResponse resp = req.GetResponse())
-                        using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
-                        {
-                            string json = sr.ReadToEnd();
-                            ParseCodexJson(json, ConnectionState.Connected);
-                            Directory.CreateDirectory(Path.GetDirectoryName(cacheFile));
-                            File.WriteAllText(cacheFile, json);
-                            success = true;
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            if (!success && Directory.Exists(sessionsDir))
-            {
-                try
-                {
-                    var files = new DirectoryInfo(sessionsDir).GetFiles("*.jsonl", SearchOption.AllDirectories);
-                    FileInfo newest = null;
-                    foreach (var f in files)
-                    {
-                        if (newest == null || f.LastWriteTime > newest.LastWriteTime) newest = f;
-                    }
-
-                    if (newest != null)
-                    {
-                        string[] lines = File.ReadAllLines(newest.FullName);
-                        for (int i = lines.Length - 1; i >= 0; i--)
-                        {
-                            if (lines[i].Contains("rate_limits"))
+                            success = ParseClaudeJson(json, ConnectionState.Connected, "Live Anthropic OAuth API");
+                            if (success)
                             {
-                                int? p1 = ExtractInt(lines[i], "primary_window_remaining_percent");
-                                if (!p1.HasValue) p1 = ExtractInt(lines[i], "percent_left");
-                                int pct = p1.HasValue ? p1.Value : 75;
-
-                                Codex5h.PercentLeft = pct;
-                                Codex5h.ResetTimeStr = "3h 40m";
-                                Codex5h.State = ConnectionState.OfflineCached;
-                                Codex5h.SourceInfo = "Session Log (" + newest.LastWriteTime.ToString("HH:mm") + ")";
-                                success = true;
-                                break;
+                                Directory.CreateDirectory(stateDir);
+                                WriteCacheAtomic(cacheFile, json);
                             }
                         }
                     }
@@ -675,77 +634,252 @@ namespace ClaudeCodexBattery
             {
                 try
                 {
-                    string cached = File.ReadAllText(cacheFile);
-                    ParseCodexJson(cached, ConnectionState.OfflineCached);
-                    success = true;
+                    success = ParseClaudeJson(File.ReadAllText(cacheFile), ConnectionState.OfflineCached, "Cached Anthropic response");
+                }
+                catch { }
+            }
+        }
+
+        internal bool ParseClaudeJson(string json, ConnectionState state, string source)
+        {
+            IDictionary<string, object> root = ParseObject(json);
+            bool fiveHour = ApplyUsageWindow(Claude5h, GetObject(root, "five_hour"), "utilization", "resets_at", state, source);
+            bool weekly = ApplyUsageWindow(ClaudeWk, GetObject(root, "seven_day"), "utilization", "resets_at", state, source);
+            bool fableWeekly = ParseClaudeScopedLimit(root, "Fable", FableWk, state, source);
+            return fiveHour || weekly || fableWeekly;
+        }
+
+        private bool ParseClaudeScopedLimit(IDictionary<string, object> root, string modelName,
+            BatteryData target, ConnectionState state, string source)
+        {
+            object[] limits = GetValue(root, "limits") as object[];
+            if (limits == null) return false;
+
+            for (int i = 0; i < limits.Length; i++)
+            {
+                IDictionary<string, object> limit = limits[i] as IDictionary<string, object>;
+                if (limit == null || !string.Equals(GetString(GetValue(limit, "kind")), "weekly_scoped", StringComparison.OrdinalIgnoreCase)) continue;
+
+                IDictionary<string, object> scope = GetObject(limit, "scope");
+                IDictionary<string, object> model = GetObject(scope, "model");
+                string displayName = GetString(GetValue(model, "display_name"));
+                if (!string.Equals(displayName, modelName, StringComparison.OrdinalIgnoreCase)) continue;
+
+                return ApplyUsageWindow(target, limit, "percent", "resets_at", state, source);
+            }
+            return false;
+        }
+
+        private void FetchCodexUsage()
+        {
+            string userDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string stateDir = Path.Combine(userDir, ".claude", "swiftbar");
+            string authFile = Path.Combine(userDir, ".codex", "auth.json");
+            string cacheFile = Path.Combine(stateDir, ".codex-usage-windows.json");
+            string sessionsDir = Path.Combine(userDir, ".codex", "sessions");
+            string noLiveFile = Path.Combine(stateDir, ".no-live");
+            bool success = false;
+
+            SetUnavailable(Codex5h, "Not connected");
+            SetUnavailable(CodexWk, "Not connected");
+
+            if (!File.Exists(noLiveFile) && File.Exists(authFile))
+            {
+                try
+                {
+                    IDictionary<string, object> auth = ParseObject(File.ReadAllText(authFile));
+                    IDictionary<string, object> tokens = GetObject(auth, "tokens");
+                    string token = GetString(GetValue(tokens, "access_token"));
+                    string accountId = GetString(GetValue(tokens, "account_id"));
+                    if (!string.IsNullOrEmpty(token))
+                    {
+                        HttpWebRequest req = CreateRequest("https://chatgpt.com/backend-api/wham/usage", token);
+                        req.UserAgent = "codex-cli";
+                        if (!string.IsNullOrEmpty(accountId)) req.Headers.Add("ChatGPT-Account-Id", accountId);
+                        using (WebResponse resp = req.GetResponse())
+                        using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                        {
+                            string json = sr.ReadToEnd();
+                            success = ParseCodexLiveJson(json, ConnectionState.Connected, "Live ChatGPT usage API");
+                            if (success)
+                            {
+                                Directory.CreateDirectory(stateDir);
+                                WriteCacheAtomic(cacheFile, json);
+                            }
+                        }
+                    }
                 }
                 catch { }
             }
 
-            if (!success)
+            if (!success) success = ReadCodexSessionFallback(sessionsDir);
+
+            if (!success && File.Exists(cacheFile))
             {
-                Codex5h.PercentLeft = -1;
-                Codex5h.ResetTimeStr = "Not Logged In";
-                Codex5h.State = ConnectionState.NotConnected;
-                Codex5h.SourceInfo = "Not Connected";
+                try
+                {
+                    success = ParseCodexLiveJson(File.ReadAllText(cacheFile), ConnectionState.OfflineCached, "Cached ChatGPT response");
+                }
+                catch { }
             }
         }
 
-        private void ParseCodexJson(string json, ConnectionState state)
+        private bool ReadCodexSessionFallback(string sessionsDir)
         {
-            int? usedPct = ExtractInt(json, "used_percent");
-            int pct = 100;
-            if (usedPct.HasValue)
+            if (!Directory.Exists(sessionsDir)) return false;
+            try
             {
-                pct = 100 - usedPct.Value;
+                FileInfo[] files = new DirectoryInfo(sessionsDir).GetFiles("*.jsonl", SearchOption.AllDirectories);
+                Array.Sort(files, delegate(FileInfo a, FileInfo b) { return b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc); });
+                int fileCount = Math.Min(8, files.Length);
+                for (int f = 0; f < fileCount; f++)
+                {
+                    string[] lines = File.ReadAllLines(files[f].FullName);
+                    for (int i = lines.Length - 1; i >= 0; i--)
+                    {
+                        if (!lines[i].Contains("rate_limits")) continue;
+                        try
+                        {
+                            IDictionary<string, object> root = ParseObject(lines[i]);
+                            IDictionary<string, object> payload = GetObject(root, "payload");
+                            IDictionary<string, object> limits = GetObject(payload, "rate_limits") ?? GetObject(root, "rate_limits");
+                            if (limits == null) continue;
+                            string source = "Session log (" + files[f].LastWriteTime.ToString("g") + ")";
+                            bool parsed = ParseCodexWindows(GetObject(limits, "primary"), GetObject(limits, "secondary"),
+                                "window_minutes", "resets_at", ConnectionState.OfflineCached, source);
+                            if (parsed) return true;
+                        }
+                        catch { }
+                    }
+                }
             }
-            else
-            {
-                int? remPct = ExtractInt(json, "remaining_percent");
-                if (remPct.HasValue) pct = remPct.Value;
-            }
-
-            int? resetSecs = ExtractInt(json, "reset_after_seconds");
-            string resetStr = "unknown";
-            if (resetSecs.HasValue)
-            {
-                TimeSpan ts = TimeSpan.FromSeconds(resetSecs.Value);
-                resetStr = string.Format("{0}d {1}h {2}m", ts.Days, ts.Hours, ts.Minutes);
-            }
-            else
-            {
-                string rStr = ExtractString(json, "reset_after_formatted");
-                if (!string.IsNullOrEmpty(rStr)) resetStr = rStr;
-            }
-
-            Codex5h.PercentLeft = Math.Max(0, Math.Min(100, pct));
-            Codex5h.ResetTimeStr = resetStr;
-            Codex5h.State = state;
-            Codex5h.SourceInfo = state == ConnectionState.Connected ? "Live ChatGPT Wham API" : "Cached Response";
-            Codex5h.LastUpdated = DateTime.Now;
+            catch { }
+            return false;
         }
 
-        private string MatchJsonValue(string json, string key)
+        internal bool ParseCodexLiveJson(string json, ConnectionState state, string source)
         {
-            Match m = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*\"([^\"]+)\"");
-            return m.Success ? m.Groups[1].Value : null;
+            IDictionary<string, object> root = ParseObject(json);
+            IDictionary<string, object> limits = GetObject(root, "rate_limit");
+            if (limits == null) return false;
+            return ParseCodexWindows(GetObject(limits, "primary_window"), GetObject(limits, "secondary_window"),
+                "limit_window_seconds", "reset_at", state, source);
         }
 
-        private int? ExtractInt(string json, string key)
+        private bool ParseCodexWindows(IDictionary<string, object> first, IDictionary<string, object> second,
+            string durationKey, string resetKey, ConnectionState state, string source)
         {
-            Match m = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*([0-9]+)");
-            if (m.Success)
+            bool parsed = false;
+            IDictionary<string, object>[] windows = new IDictionary<string, object>[] { first, second };
+            for (int i = 0; i < windows.Length; i++)
             {
-                int v;
-                if (int.TryParse(m.Groups[1].Value, out v)) return v;
+                IDictionary<string, object> window = windows[i];
+                if (window == null) continue;
+                double? duration = GetNumber(GetValue(window, durationKey));
+                bool shortWindow;
+                if (duration.HasValue)
+                {
+                    double seconds = durationKey == "window_minutes" ? duration.Value * 60.0 : duration.Value;
+                    shortWindow = seconds <= 6 * 60 * 60;
+                }
+                else
+                {
+                    shortWindow = i == 0;
+                }
+                BatteryData target = shortWindow ? Codex5h : CodexWk;
+                parsed = ApplyUsageWindow(target, window, "used_percent", resetKey, state, source) || parsed;
             }
-            return null;
+            return parsed;
         }
 
-        private string ExtractString(string json, string key)
+        private HttpWebRequest CreateRequest(string url, string token)
         {
-            Match m = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*\"([^\"]+)\"");
-            return m.Success ? m.Groups[1].Value : null;
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+            req.Headers.Add("Authorization", "Bearer " + token);
+            req.UserAgent = "claude-codex-battery-win/1.0";
+            req.Timeout = 5000;
+            req.ReadWriteTimeout = 5000;
+            return req;
+        }
+
+        private bool ApplyUsageWindow(BatteryData target, IDictionary<string, object> window, string usedKey,
+            string resetKey, ConnectionState state, string source)
+        {
+            if (window == null) return false;
+            double? used = GetNumber(GetValue(window, usedKey));
+            if (!used.HasValue) return false;
+            target.PercentLeft = Math.Max(0, Math.Min(100, (int)Math.Round(100.0 - used.Value)));
+            target.ResetTimeStr = FormatReset(GetValue(window, resetKey));
+            target.State = state;
+            target.SourceInfo = source;
+            target.LastUpdated = DateTime.Now;
+            return true;
+        }
+
+        private void SetUnavailable(BatteryData data, string source)
+        {
+            data.PercentLeft = -1;
+            data.ResetTimeStr = "Unavailable";
+            data.State = ConnectionState.NotConnected;
+            data.SourceInfo = source;
+        }
+
+        private string FormatReset(object value)
+        {
+            if (value == null) return "unknown";
+            DateTimeOffset resetAt;
+            string text = GetString(value);
+            if (!string.IsNullOrEmpty(text) && DateTimeOffset.TryParse(text, out resetAt))
+            {
+                return FormatDuration(resetAt.UtcDateTime - DateTime.UtcNow);
+            }
+            double? epoch = GetNumber(value);
+            if (epoch.HasValue)
+            {
+                try
+                {
+                    DateTime utc = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(epoch.Value);
+                    return FormatDuration(utc - DateTime.UtcNow);
+                }
+                catch { }
+            }
+            return "unknown";
+        }
+
+        private string FormatDuration(TimeSpan remaining)
+        {
+            if (remaining.TotalSeconds <= 0) return "now";
+            if (remaining.Days > 0) return string.Format("{0}d {1}h", remaining.Days, remaining.Hours);
+            if (remaining.Hours > 0) return string.Format("{0}h {1}m", remaining.Hours, remaining.Minutes);
+            return string.Format("{0}m", Math.Max(1, remaining.Minutes));
+        }
+
+        private IDictionary<string, object> ParseObject(string json)
+        {
+            return Json.DeserializeObject(json) as IDictionary<string, object>;
+        }
+
+        private IDictionary<string, object> GetObject(IDictionary<string, object> obj, string key)
+        {
+            return GetValue(obj, key) as IDictionary<string, object>;
+        }
+
+        private object GetValue(IDictionary<string, object> obj, string key)
+        {
+            if (obj == null || !obj.ContainsKey(key)) return null;
+            return obj[key];
+        }
+
+        private string GetString(object value)
+        {
+            return value as string;
+        }
+
+        private double? GetNumber(object value)
+        {
+            if (value == null) return null;
+            try { return Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture); }
+            catch { return null; }
         }
 
         public bool IsAutoStartEnabled()
@@ -791,7 +925,35 @@ namespace ClaudeCodexBattery
             refreshTimer.Stop();
             animTimer.Stop();
             trayIcon.Visible = false;
+            Icon currentIcon = trayIcon.Icon;
+            trayIcon.Icon = null;
+            if (currentIcon != null) currentIcon.Dispose();
+            trayIcon.Dispose();
             Application.Exit();
+        }
+
+        internal static void WriteCacheAtomic(string path, string content)
+        {
+            string directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+            string tempPath = path + ".tmp." + Guid.NewGuid().ToString("N");
+            try
+            {
+                File.WriteAllText(tempPath, content, new UTF8Encoding(false));
+                if (File.Exists(path))
+                {
+                    File.Replace(tempPath, path, null, true);
+                }
+                else
+                {
+                    File.Move(tempPath, path);
+                }
+            }
+            finally
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
         }
     }
 
@@ -800,29 +962,50 @@ namespace ClaudeCodexBattery
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
+
         private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
         private const int DWMWCP_ROUND = 2; // Win11 Glass Round Corners
+        private const int WM_NCLBUTTONDOWN = 0x00A1;
+        private const int HTCAPTION = 2;
 
         private TrayApplicationContext appContext;
         private Label lblHeader;
-        private Panel pnlClaude5h, pnlClaudeWk, pnlCodex5h;
-        private Label lblClaude5h, lblClaudeWk, lblCodex5h;
+        private Panel pnlClaude5h, pnlClaudeWk, pnlFableWk, pnlCodex5h, pnlCodexWk;
+        private Label lblClaude5h, lblClaudeWk, lblFableWk, lblCodex5h, lblCodexWk;
         private Label lblStatus;
         private Button btnRefresh, btnSettings, btnClose;
+        private ContextMenuStrip settingsMenu;
+        private ToolTip headerToolTip;
         public bool PinOpen = false;
-        private int catAnimFrame = 0;
+        public bool AlwaysOnTopEnabled { get; private set; }
+        private int catAnimFrame;
+        private readonly string windowSettingsFile;
+        private readonly string windowPositionFile;
 
         public FlyoutForm(TrayApplicationContext ctx)
         {
             appContext = ctx;
+            string stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "swiftbar");
+            windowSettingsFile = Path.Combine(stateDir, ".windows-window-settings");
+            windowPositionFile = Path.Combine(stateDir, ".windows-window-position");
 
             this.FormBorderStyle = FormBorderStyle.None;
+            this.Text = "Claude & Codex Battery";
+            this.AccessibleName = "Claude and Codex usage limits";
             this.StartPosition = FormStartPosition.Manual;
-            this.ShowInTaskbar = false;
+            this.ShowInTaskbar = Program.AutoShowOnStart;
+            this.AlwaysOnTopEnabled = true;
             this.TopMost = true;
-            this.Size = new Size(350, 300);
+            this.Size = new Size(270, 205);
             this.BackColor = Color.FromArgb(15, 17, 26); // Deep Obsidian Glass Backdrop
             this.DoubleBuffered = true;
+            LoadWindowSettings();
+            this.MouseDown += new MouseEventHandler(BeginWindowDrag);
 
             try
             {
@@ -840,27 +1023,33 @@ namespace ClaudeCodexBattery
             lblHeader = new Label
             {
                 Text = "⚡ Usage Limits",
-                Font = new Font("Segoe UI Variable Display", 11.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI Variable Display", 9.5f, FontStyle.Bold),
                 ForeColor = Color.White,
-                Location = new Point(18, 16),
+                Location = new Point(10, 9),
                 AutoSize = true
             };
+            lblHeader.Cursor = Cursors.SizeAll;
+            lblHeader.MouseDown += new MouseEventHandler(BeginWindowDrag);
             this.Controls.Add(lblHeader);
 
-            int y = 52;
+            int y = 36;
 
-            pnlClaude5h = CreateMetricRow(ref y, "Claude 5h Limit", out lblClaude5h);
-            pnlClaudeWk = CreateMetricRow(ref y, "Claude Weekly Limit", out lblClaudeWk);
-            pnlCodex5h = CreateMetricRow(ref y, "Codex Usage Limit", out lblCodex5h);
+            pnlClaude5h = CreateMetricRow(ref y, "Claude 5h", out lblClaude5h);
+            pnlClaudeWk = CreateMetricRow(ref y, "Claude Week", out lblClaudeWk);
+            pnlFableWk = CreateMetricRow(ref y, "Fable Week", out lblFableWk);
+            pnlCodex5h = CreateMetricRow(ref y, "Codex 5h", out lblCodex5h);
+            pnlCodexWk = CreateMetricRow(ref y, "Codex Week", out lblCodexWk);
 
             // Status indicator with live green dot
             lblStatus = new Label
             {
                 Text = "● Status: Initializing...",
-                Font = new Font("Segoe UI", 8.5f),
+                Font = new Font("Segoe UI", 7.5f),
                 ForeColor = Color.FromArgb(140, 148, 175),
-                Location = new Point(18, y + 6),
-                Size = new Size(314, 22)
+                Location = new Point(12, y + 2),
+                Size = new Size(296, 16),
+                AutoEllipsis = true,
+                Visible = false
             };
             this.Controls.Add(lblStatus);
 
@@ -878,10 +1067,10 @@ namespace ClaudeCodexBattery
             };
             btnSettings.FlatAppearance.BorderSize = 1;
             btnSettings.FlatAppearance.BorderColor = Color.FromArgb(50, 56, 80);
+            settingsMenu = appContext.CreateContextMenu(false);
             btnSettings.Click += new EventHandler((s, e) =>
             {
-                ContextMenuStrip menu = appContext.CreateContextMenu();
-                menu.Show(btnSettings, new Point(0, btnSettings.Height + 4));
+                settingsMenu.Show(btnSettings, new Point(0, btnSettings.Height + 4));
             });
             this.Controls.Add(btnSettings);
 
@@ -917,23 +1106,73 @@ namespace ClaudeCodexBattery
             btnClose.FlatAppearance.BorderSize = 0;
             btnClose.Click += new EventHandler((s, e) => this.Hide());
             this.Controls.Add(btnClose);
+            ConfigureCompactHeaderActions();
+        }
+
+        private void ConfigureCompactHeaderActions()
+        {
+            headerToolTip = new ToolTip();
+
+            btnSettings.Text = "⚙";
+            btnSettings.AccessibleName = "Settings";
+            btnSettings.Font = new Font("Segoe UI Symbol", 9.5f);
+            btnSettings.TextAlign = ContentAlignment.MiddleCenter;
+            btnSettings.Padding = new Padding(0);
+            btnSettings.Location = new Point(182, 6);
+            btnSettings.Size = new Size(24, 24);
+            btnSettings.FlatAppearance.BorderSize = 0;
+            DrawCenteredHeaderIcon(btnSettings, "⚙");
+            headerToolTip.SetToolTip(btnSettings, "Settings");
+
+            btnRefresh.Text = "↻";
+            btnRefresh.AccessibleName = "Refresh usage";
+            btnRefresh.Font = new Font("Segoe UI Symbol", 10f);
+            btnRefresh.TextAlign = ContentAlignment.MiddleCenter;
+            btnRefresh.Padding = new Padding(0);
+            btnRefresh.Location = new Point(210, 6);
+            btnRefresh.Size = new Size(24, 24);
+            btnRefresh.FlatAppearance.BorderSize = 0;
+            DrawCenteredHeaderIcon(btnRefresh, "↻");
+            headerToolTip.SetToolTip(btnRefresh, "Refresh usage");
+
+            btnClose.Text = "✕";
+            btnClose.AccessibleName = "Close dashboard";
+            btnClose.Font = new Font("Segoe UI Symbol", 10f);
+            btnClose.TextAlign = ContentAlignment.MiddleCenter;
+            btnClose.Padding = new Padding(0);
+            btnClose.Location = new Point(238, 6);
+            btnClose.Size = new Size(24, 24);
+            btnClose.FlatAppearance.BorderSize = 0;
+            DrawCenteredHeaderIcon(btnClose, "✕");
+            headerToolTip.SetToolTip(btnClose, "Close dashboard");
+        }
+
+        private void DrawCenteredHeaderIcon(Button button, string glyph)
+        {
+            button.Text = string.Empty;
+            button.Paint += new PaintEventHandler((s, e) =>
+            {
+                TextRenderer.DrawText(e.Graphics, glyph, button.Font, button.ClientRectangle, button.ForeColor,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            });
         }
 
         private Panel CreateMetricRow(ref int y, string labelText, out Label valueLabel)
         {
             Panel pnl = new Panel
             {
-                Location = new Point(18, y),
-                Size = new Size(314, 56),
+                Location = new Point(10, y),
+                Size = new Size(250, 34),
                 BackColor = Color.FromArgb(22, 25, 38)
             };
 
             Label title = new Label
             {
                 Text = labelText,
-                Font = new Font("Segoe UI Semibold", 9.5f),
+                Font = new Font("Segoe UI Semibold", 8.5f),
                 ForeColor = Color.FromArgb(215, 220, 240),
-                Location = new Point(12, 8),
+                Location = new Point(8, 3),
                 AutoSize = true
             };
             pnl.Controls.Add(title);
@@ -941,62 +1180,89 @@ namespace ClaudeCodexBattery
             valueLabel = new Label
             {
                 Text = "--%",
-                Font = new Font("Segoe UI Variable Display", 9.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI Variable Display", 8.5f, FontStyle.Bold),
                 ForeColor = Color.White,
-                Location = new Point(130, 8),
-                Size = new Size(172, 20),
+                Location = new Point(88, 3),
+                Size = new Size(154, 17),
                 TextAlign = ContentAlignment.TopRight
             };
             pnl.Controls.Add(valueLabel);
 
-            y += 64;
+            y += 39;
             this.Controls.Add(pnl);
             return pnl;
         }
 
         public void UpdateUI()
         {
-            bool hasClaude = (TrayApplicationContext.Claude5h.State != ConnectionState.NotConnected);
-            bool hasCodex = (TrayApplicationContext.Codex5h.State != ConnectionState.NotConnected);
+            bool hasClaude5h = TrayApplicationContext.Claude5h.State != ConnectionState.NotConnected;
+            bool hasClaudeWk = TrayApplicationContext.ClaudeWk.State != ConnectionState.NotConnected;
+            bool hasFableWk = TrayApplicationContext.FableWk.State != ConnectionState.NotConnected;
+            bool hasCodex5h = TrayApplicationContext.Codex5h.State != ConnectionState.NotConnected;
+            bool hasCodexWk = TrayApplicationContext.CodexWk.State != ConnectionState.NotConnected;
+            bool hasClaude = hasClaude5h || hasClaudeWk || hasFableWk;
+            bool hasCodex = hasCodex5h || hasCodexWk;
 
-            int y = 52;
+            int y = 36;
 
             if (hasClaude)
             {
-                pnlClaude5h.Visible = true;
-                pnlClaudeWk.Visible = true;
-                pnlClaude5h.Location = new Point(18, y); y += 64;
-                pnlClaudeWk.Location = new Point(18, y); y += 64;
-                UpdateRow(pnlClaude5h, lblClaude5h, TrayApplicationContext.Claude5h);
-                UpdateRow(pnlClaudeWk, lblClaudeWk, TrayApplicationContext.ClaudeWk);
+                pnlClaude5h.Visible = hasClaude5h;
+                pnlClaudeWk.Visible = hasClaudeWk;
+                pnlFableWk.Visible = hasFableWk;
+                if (hasClaude5h)
+                {
+                    pnlClaude5h.Location = new Point(10, y); y += 39;
+                    UpdateRow(pnlClaude5h, lblClaude5h, TrayApplicationContext.Claude5h);
+                }
+                if (hasClaudeWk)
+                {
+                    pnlClaudeWk.Location = new Point(10, y); y += 39;
+                    UpdateRow(pnlClaudeWk, lblClaudeWk, TrayApplicationContext.ClaudeWk);
+                }
+                if (hasFableWk)
+                {
+                    pnlFableWk.Location = new Point(10, y); y += 39;
+                    UpdateRow(pnlFableWk, lblFableWk, TrayApplicationContext.FableWk);
+                }
             }
             else
             {
                 pnlClaude5h.Visible = false;
                 pnlClaudeWk.Visible = false;
+                pnlFableWk.Visible = false;
             }
 
             if (hasCodex)
             {
-                pnlCodex5h.Visible = true;
-                pnlCodex5h.Location = new Point(18, y); y += 64;
-                UpdateRow(pnlCodex5h, lblCodex5h, TrayApplicationContext.Codex5h);
+                pnlCodex5h.Visible = hasCodex5h;
+                pnlCodexWk.Visible = hasCodexWk;
+                if (hasCodex5h)
+                {
+                    pnlCodex5h.Location = new Point(10, y); y += 39;
+                    UpdateRow(pnlCodex5h, lblCodex5h, TrayApplicationContext.Codex5h);
+                }
+                if (hasCodexWk)
+                {
+                    pnlCodexWk.Location = new Point(10, y); y += 39;
+                    UpdateRow(pnlCodexWk, lblCodexWk, TrayApplicationContext.CodexWk);
+                }
             }
             else
             {
                 pnlCodex5h.Visible = false;
+                pnlCodexWk.Visible = false;
             }
 
-            int contentHeight = Math.Max(165, y + 78);
+            int contentHeight = Math.Max(80, y + 6);
             this.Height = contentHeight;
+            EnsureVisibleAfterResize();
 
-            lblStatus.Location = new Point(18, y + 4);
-            btnSettings.Location = new Point(18, y + 32);
-            btnRefresh.Location = new Point(121, y + 32);
-            btnClose.Location = new Point(247, y + 32);
+            lblStatus.Location = new Point(10, y);
 
-            string cSrc = !hasClaude ? "Claude: Offline" : TrayApplicationContext.Claude5h.SourceInfo;
-            string xSrc = !hasCodex ? "Codex: Offline" : TrayApplicationContext.Codex5h.SourceInfo;
+            string cSrc = !hasClaude ? "Claude: Offline" : (hasClaude5h ? TrayApplicationContext.Claude5h.SourceInfo :
+                (hasClaudeWk ? TrayApplicationContext.ClaudeWk.SourceInfo : TrayApplicationContext.FableWk.SourceInfo));
+            string xSrc = !hasCodex ? "Codex: Offline" : (hasCodex5h ? TrayApplicationContext.Codex5h.SourceInfo : TrayApplicationContext.CodexWk.SourceInfo);
 
             if (hasCodex && !hasClaude)
             {
@@ -1014,12 +1280,14 @@ namespace ClaudeCodexBattery
                 lblStatus.Text = "● " + cSrc + " | " + xSrc;
             }
 
+            lblHeader.Text = hasCodex && hasClaude ? "⚡ Claude · Codex" :
+                (hasClaude ? "⚡ Claude Limits" : "⚡ Codex Limits");
             this.Invalidate();
         }
 
         private void UpdateRow(Panel pnl, Label valLbl, BatteryData data)
         {
-            valLbl.Text = string.Format("{0}% (resets {1})", data.PercentLeft, data.ResetTimeStr);
+            valLbl.Text = string.Format("{0}% · {1}", data.PercentLeft, data.ResetTimeStr);
             valLbl.ForeColor = Color.White;
 
             pnl.Paint -= Panel_Paint;
@@ -1044,10 +1312,10 @@ namespace ClaudeCodexBattery
                 g.DrawPath(borderPen, cardPath);
             }
 
-            int barX = 12;
-            int barY = 34;
-            int barW = 290;
-            int barH = 10;
+            int barX = 8;
+            int barY = 25;
+            int barW = 234;
+            int barH = 4;
 
             // Bar background container
             using (SolidBrush bg = new SolidBrush(Color.FromArgb(36, 40, 60)))
@@ -1080,18 +1348,20 @@ namespace ClaudeCodexBattery
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            // Draw Clean Mascot Companion in Header Top Right
             catAnimFrame = (catAnimFrame + 1) % 4;
-            int activePct = TrayApplicationContext.Codex5h.PercentLeft >= 0 ? TrayApplicationContext.Codex5h.PercentLeft : TrayApplicationContext.Claude5h.PercentLeft;
-            int pct = activePct >= 0 ? activePct : 80;
+            int activePct = TrayApplicationContext.Codex5h.PercentLeft >= 0 ? TrayApplicationContext.Codex5h.PercentLeft :
+                            TrayApplicationContext.CodexWk.PercentLeft >= 0 ? TrayApplicationContext.CodexWk.PercentLeft :
+                            TrayApplicationContext.Claude5h.PercentLeft >= 0 ? TrayApplicationContext.Claude5h.PercentLeft :
+                            TrayApplicationContext.ClaudeWk.PercentLeft >= 0 ? TrayApplicationContext.ClaudeWk.PercentLeft :
+                            TrayApplicationContext.FableWk.PercentLeft;
 
             if (TrayApplicationContext.CurrentSkin == MascotSkin.Slime)
             {
-                TrayApplicationContext.DrawFullSizeSlime(g, this.Width - 40, 8, pct, catAnimFrame);
+                TrayApplicationContext.DrawFullSizeSlime(g, 132, 2, activePct, catAnimFrame);
             }
             else if (TrayApplicationContext.CurrentSkin == MascotSkin.Cat)
             {
-                TrayApplicationContext.DrawFullSizeCat(g, this.Width - 40, 8, pct, catAnimFrame);
+                TrayApplicationContext.DrawFullSizeCat(g, 132, 2, activePct, catAnimFrame);
             }
 
             // Glassmorphic Outer Border Glow
@@ -1101,19 +1371,120 @@ namespace ClaudeCodexBattery
             }
         }
 
+        private void EnsureVisibleAfterResize()
+        {
+            Rectangle workingArea = Screen.FromRectangle(this.Bounds).WorkingArea;
+            int x = Math.Max(workingArea.Left, Math.Min(this.Left, workingArea.Right - this.Width));
+            int y = Math.Max(workingArea.Top, Math.Min(this.Top, workingArea.Bottom - this.Height));
+            if (x != this.Left || y != this.Top) this.Location = new Point(x, y);
+        }
+
+        public void SetPinOpen(bool enabled)
+        {
+            PinOpen = enabled;
+            SaveWindowSettings();
+        }
+
+        public void SetAlwaysOnTop(bool enabled)
+        {
+            AlwaysOnTopEnabled = enabled;
+            this.TopMost = enabled;
+            SaveWindowSettings();
+        }
+
+        private void BeginWindowDrag(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            ReleaseCapture();
+            SendMessage(this.Handle, WM_NCLBUTTONDOWN, new IntPtr(HTCAPTION), IntPtr.Zero);
+            SaveWindowPosition();
+        }
+
+        private void LoadWindowSettings()
+        {
+            try
+            {
+                if (!File.Exists(windowSettingsFile)) return;
+                string[] lines = File.ReadAllLines(windowSettingsFile);
+                foreach (string line in lines)
+                {
+                    string[] parts = line.Split(new char[] { '=' }, 2);
+                    if (parts.Length != 2) continue;
+                    bool value;
+                    if (!bool.TryParse(parts[1], out value)) continue;
+                    if (parts[0] == "pinOpen") PinOpen = value;
+                    if (parts[0] == "alwaysOnTop")
+                    {
+                        AlwaysOnTopEnabled = value;
+                        this.TopMost = value;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void SaveWindowSettings()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(windowSettingsFile));
+                File.WriteAllLines(windowSettingsFile, new string[]
+                {
+                    "pinOpen=" + PinOpen.ToString(),
+                    "alwaysOnTop=" + AlwaysOnTopEnabled.ToString()
+                });
+            }
+            catch { }
+        }
+
+        private Point? LoadWindowPosition()
+        {
+            try
+            {
+                if (!File.Exists(windowPositionFile)) return null;
+                string[] parts = File.ReadAllText(windowPositionFile).Trim().Split(',');
+                int x, y;
+                if (parts.Length != 2 || !int.TryParse(parts[0], out x) || !int.TryParse(parts[1], out y)) return null;
+                Rectangle candidate = new Rectangle(x, y, this.Width, this.Height);
+                foreach (Screen screen in Screen.AllScreens)
+                {
+                    if (screen.WorkingArea.IntersectsWith(candidate)) return new Point(x, y);
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private void SaveWindowPosition()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(windowPositionFile));
+                File.WriteAllText(windowPositionFile, this.Left + "," + this.Top);
+            }
+            catch { }
+        }
+
         public void ShowNearTray(NotifyIcon icon)
         {
-            Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
-            int targetX = workingArea.Right - this.Width - 16;
-            int targetY = workingArea.Bottom - this.Height - 16;
-
-            if (Program.AutoShowOnStart)
+            Point? savedPosition = LoadWindowPosition();
+            if (savedPosition.HasValue)
             {
-                targetX = workingArea.Left + (workingArea.Width - this.Width) / 2;
-                targetY = workingArea.Top + (workingArea.Height - this.Height) / 2;
+                this.Location = savedPosition.Value;
             }
+            else
+            {
+                Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+                int targetX = workingArea.Right - this.Width - 16;
+                int targetY = workingArea.Bottom - this.Height - 16;
 
-            this.Location = new Point(targetX, targetY);
+                if (Program.AutoShowOnStart)
+                {
+                    targetX = workingArea.Left + (workingArea.Width - this.Width) / 2;
+                    targetY = workingArea.Top + (workingArea.Height - this.Height) / 2;
+                }
+                this.Location = new Point(targetX, targetY);
+            }
             this.Show();
             this.BringToFront();
             this.Focus();
@@ -1126,6 +1497,21 @@ namespace ClaudeCodexBattery
             {
                 this.Hide();
             }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && settingsMenu != null)
+            {
+                settingsMenu.Dispose();
+                settingsMenu = null;
+            }
+            if (disposing && headerToolTip != null)
+            {
+                headerToolTip.Dispose();
+                headerToolTip = null;
+            }
+            base.Dispose(disposing);
         }
     }
 }

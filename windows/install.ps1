@@ -1,45 +1,56 @@
-# install.ps1 - Native Windows Build & Installation Script for claude-codex-battery
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -ErrorAction SilentlyContinue
+param(
+    [switch]$EnableAutoStart,
+    [switch]$DisableAutoStart,
+    [switch]$NoLaunch
+)
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-Set-Location $ScriptDir
+$ErrorActionPreference = "Stop"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$sourceFile = Join-Path $scriptDir "ClaudeCodexBattery.cs"
+$installDir = Join-Path $env:LOCALAPPDATA "ClaudeCodexBattery"
+$outputExe = Join-Path $installDir "ClaudeCodexBattery.exe"
 
-Write-Host "🔋 [Claude & Codex Battery] Building Native Windows Port..." -ForegroundColor Cyan
-
-# 1. Locate csc.exe (.NET Framework C# Compiler)
-$cscPath = Get-ChildItem -Path "$env:SystemRoot\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName -First 1
-if (-not $cscPath) {
-    $cscPath = Get-ChildItem -Path "$env:SystemRoot\Microsoft.NET\Framework\v4.0.30319\csc.exe" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName -First 1
+if ($EnableAutoStart -and $DisableAutoStart) {
+    throw "Choose either -EnableAutoStart or -DisableAutoStart, not both."
 }
 
+$compilerCandidates = @(
+    (Join-Path $env:SystemRoot "Microsoft.NET\Framework64\v4.0.30319\csc.exe"),
+    (Join-Path $env:SystemRoot "Microsoft.NET\Framework\v4.0.30319\csc.exe")
+)
+$cscPath = $compilerCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $cscPath) {
-    Write-Error "Could not find csc.exe compiler in .NET Framework directory."
-    exit 1
+    throw "The .NET Framework C# compiler (csc.exe) was not found."
 }
 
-Write-Host "Found C# Compiler: $cscPath" -ForegroundColor Gray
-
-# 2. Compile ClaudeCodexBattery.cs into GUI Executable (.exe)
-$outputExe = Join-Path $ScriptDir "ClaudeCodexBattery.exe"
-$sourceFile = Join-Path $ScriptDir "ClaudeCodexBattery.cs"
-
-# Stop existing running instance if any
+Write-Host "Building Claude & Codex Battery for Windows..." -ForegroundColor Cyan
 Get-Process -Name "ClaudeCodexBattery" -ErrorAction SilentlyContinue | Stop-Process -Force
+New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
-$compileCmd = "& `"$cscPath`" /target:winexe /out:`"$outputExe`" /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll `"$sourceFile`""
-Invoke-Expression $compileCmd
-
-if (Test-Path $outputExe) {
-    Write-Host "✅ Successfully compiled: $outputExe" -ForegroundColor Green
-} else {
-    Write-Error "Compilation failed."
-    exit 1
+& $cscPath /nologo /target:winexe /out:$outputExe /r:System.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll $sourceFile
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $outputExe)) {
+    throw "Compilation failed."
 }
 
-# 3. Add to Windows Startup (Registry)
 $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-Set-ItemProperty -Path $regPath -Name "ClaudeCodexBattery" -Value "`"$outputExe`"" -ErrorAction SilentlyContinue
+if ($EnableAutoStart) {
+    Set-ItemProperty -Path $regPath -Name "ClaudeCodexBattery" -Value ('"{0}"' -f $outputExe)
+    Write-Host "Start at login enabled." -ForegroundColor Green
+} elseif ($DisableAutoStart) {
+    Remove-ItemProperty -Path $regPath -Name "ClaudeCodexBattery" -ErrorAction SilentlyContinue
+    Write-Host "Start at login disabled." -ForegroundColor Yellow
+} else {
+    $existingAutoStart = Get-ItemProperty -Path $regPath -Name "ClaudeCodexBattery" -ErrorAction SilentlyContinue
+    if ($existingAutoStart) {
+        Set-ItemProperty -Path $regPath -Name "ClaudeCodexBattery" -Value ('"{0}"' -f $outputExe)
+        Write-Host "Existing start-at-login preference preserved." -ForegroundColor Green
+    } else {
+        Write-Host "Start at login is off. Enable it later from Settings or rerun with -EnableAutoStart." -ForegroundColor Yellow
+    }
+}
 
-# 4. Launch Application
-Start-Process -FilePath $outputExe
-Write-Host "🚀 ClaudeCodexBattery is running! Check your System Tray (bottom right)." -ForegroundColor Green
+if (-not $NoLaunch) {
+    Start-Process -FilePath $outputExe
+}
+
+Write-Host "Installed: $outputExe" -ForegroundColor Green
