@@ -283,7 +283,7 @@ const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── Auto-update (notification + one click) ──
-const VERSION = "2.6.0";
+const VERSION = "2.6.1";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -978,9 +978,31 @@ const out = [];
 //   Codex:  X5=5h · XW=weekly
 const rem = (pct) => (pct == null ? null : Math.max(0, 100 - pct));
 
+// rows → the same pixel-battery PNG the menu bar shows
+function battRowsToImage(rows) {
+  const items = rows.map((r) => ({ label: r.label, remain: r.remain }));
+  return renderBatteryImage(true, items.length ? items : [{ label: "C5", remain: null }]);
+}
+
 // ── Terminal output modes (Linux/Chromebook & terminal fans): --cli · --statusline · --tmux · --json ──
-const CLI_MODE = process.argv.includes("--json")
-  ? "json"
+if (process.argv.includes("--serve")) {
+  const port = Number(process.env.CCB_PORT || 41414);
+  Bun.serve({
+    port,
+    async fetch() {
+      const proc = Bun.spawn(["bun", process.argv[1], "--html"], { env: process.env });
+      const html = await new Response(proc.stdout).text();
+      return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    },
+  });
+  console.log(`Claude Codex Battery window: http://localhost:${port}`);
+  console.log(`Chrome → open the URL → ⋮ menu → Cast/Save → "Install as app" (or Create shortcut, open as window)`);
+  await new Promise(() => {}); // keep serving
+} else {
+const CLI_MODE = process.argv.includes("--html")
+  ? "html"
+  : process.argv.includes("--json")
+    ? "json"
   : process.argv.includes("--tmux")
     ? "tmux"
     : process.argv.includes("--statusline")
@@ -1013,6 +1035,35 @@ if (CLI_MODE) {
     r == null ? "\x1b[90m" : Math.round(r) >= 100 ? "\x1b[93m" : r <= 20 ? "\x1b[31m" : r < 50 ? "\x1b[33m" : "\x1b[32m";
   const R = "\x1b[0m";
   const pct = (r) => (r == null ? "--" : `${Math.round(r)}%`);
+  if (CLI_MODE === "html") {
+    // Full page with the real pixel-battery PNG (same renderer as the menu bar)
+    const img = battRowsToImage(rows);
+    const rowHtml = rows
+      .map((r) => {
+        const v = r.remain == null ? "--" : Math.round(r.remain);
+        const color = r.remain == null ? "#8b949e" : v >= 100 ? "#ffd54a" : heatRemainHex(r.remain);
+        return `<div class="row"><span class="lbl">${r.label}</span><div class="track"><div class="fill" style="width:${Math.max(0, Math.min(100, v === "--" ? 0 : v))}%;background:${color}"></div></div><span class="pct" style="color:${color}">${v}%</span><span class="reset">${r.reset}</span></div>`;
+      })
+      .join("");
+    console.log(`<!doctype html><html><head><meta charset="utf-8"><title>Claude Codex Battery</title>
+<meta http-equiv="refresh" content="120">
+<style>
+body{margin:0;background:#17191d;color:#e6e6e6;font:14px/1.6 ui-monospace,Menlo,monospace;display:flex;flex-direction:column;align-items:center;gap:18px;padding:26px 30px}
+img{image-rendering:pixelated;height:24px;max-width:100%}
+.row{display:flex;align-items:center;gap:10px;width:100%}
+.lbl{width:2.2em;color:#8b949e}
+.track{flex:1;height:10px;background:#2a2e35;border-radius:5px;overflow:hidden;min-width:160px}
+.fill{height:100%}
+.pct{width:3.2em;text-align:right}
+.reset{color:#8b949e;font-size:12px;width:9em}
+.foot{color:#4d5560;font-size:11px}
+</style></head><body>
+<img src="data:image/png;base64,${img}" alt="batteries">
+<div style="width:100%">${rowHtml}</div>
+<div class="foot">Claude Codex Battery · refreshes every 2 min</div>
+</body></html>`);
+    process.exit(0);
+  }
   if (CLI_MODE === "cli") {
     for (const r of rows) {
       const v = r.remain == null ? " --" : String(Math.round(r.remain)).padStart(3);
@@ -1034,6 +1085,7 @@ if (CLI_MODE) {
     }));
   }
   process.exit(0);
+}
 }
 // Single-service users: only show the service that has data
 const hasClaude = !!cusage || !!(claude && !claude.error);

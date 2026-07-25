@@ -142,6 +142,8 @@ cd claude-codex-battery
 
 tmux example: `set -g status-right '#(~/claude-codex-battery/ccb --tmux)'` with `status-interval 120`. On Linux the Claude login is read from `~/.claude/.credentials.json` (no Keychain needed); Codex from `~/.codex` as usual.
 
+**Prefer a window?** <img src="docs/ccb-window.png" align="right" width="180" alt="ccb window"> `./ccb --serve` starts a tiny local server (port 41414) that renders the same pixel batteries as a small auto-refreshing page. Open it in Chrome and use ⋮ → *Save and share* → *Install page as app* — you get a standalone window with its own shelf icon, which is as close to a "menu bar battery" as ChromeOS allows.
+
 ---
 
 ## Updating
