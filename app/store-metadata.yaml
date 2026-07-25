@@ -1,0 +1,68 @@
+# App Store submission metadata — Claude Codex Battery
+app:
+  name: "Claude Codex Battery"            # fallback if taken: "Claude & Codex Usage Battery"
+  subtitle: "Usage batteries in your menu bar"
+  bundle_id: com.dennykim.claude-codex-battery-app
+  sku: ccb-app
+  category: Developer Tools
+  price: Free
+  primary_language: en-US
+
+description: |
+  Claude Codex Battery shows how much of your Claude Code and Codex rate limits
+  you have left — as tiny pixel battery icons that live in your menu bar.
+
+  Each battery shows the remaining % of a limit window: the Claude 5-hour session,
+  the weekly cap, the top-model weekly cap, and the Codex windows. Full and green
+  means plenty left; red means almost out. Click for a dropdown with exact
+  percentages and reset countdowns.
+
+  FEATURES
+  - Live, account-level numbers — the same data the /usage command shows, fetched
+    with your own local logins. Every device sees the same numbers.
+  - 100% batteries turn gold, with a little shine.
+  - Optional pixel mascot (off by default): a cat face or a slime that dozes when
+    you're idle, focuses while you work, catches fire during heavy use, and panics
+    when you're on pace to hit zero before the reset.
+  - A time-attack "lap" row: reach the reset before running empty.
+  - Six UI languages: English, Korean, Japanese, Chinese (Simplified and
+    Traditional), Spanish.
+  - Starts at login (optional), light and dark mode, Retina-crisp pixel art.
+
+  REQUIREMENTS
+  - Claude Code batteries need Claude Code to be signed in on this Mac. macOS will
+    ask once for permission to read its Keychain login item.
+  - Codex batteries are optional and need one-time access to your ~/.codex folder
+    (the app asks; you can skip it).
+  - Nothing is uploaded anywhere: the app's only network calls are the two official
+    usage endpoints (Anthropic and OpenAI), using your own logins.
+
+  If you use neither tool, this app will show you nothing at all — it is made for
+  Claude Code / Codex users.
+
+keywords: "claude,codex,usage,rate limit,menu bar,battery,anthropic,openai,developer,quota,monitor,pixel"
+
+urls:
+  support: https://github.com/dennykim123/claude-codex-battery
+  marketing: https://github.com/dennykim123/claude-codex-battery
+  privacy_policy: https://github.com/dennykim123/claude-codex-battery#privacy--security
+
+app_privacy: "Data Not Collected"  # no analytics, no identifiers; only the two usage API calls with the user's own tokens
+
+review_notes: |
+  This is a companion utility for two developer CLI tools: Claude Code (Anthropic)
+  and Codex (OpenAI). It displays the user's own remaining rate limits.
+  - It reads the user's existing Claude Code login token from the macOS Keychain
+    (system consent prompt) and calls Anthropic's usage endpoint — the same data
+    the CLI's /usage command shows.
+  - Codex data is optional and requires the user to grant read access to ~/.codex
+    via the standard open panel.
+  - Without either tool installed the app shows a placeholder (a battery outline)
+    and an explanatory dropdown row; all UI (Settings, languages, mascot) remains
+    reviewable.
+  - No accounts are created by this app; it has no server; nothing is collected.
+
+screenshots:
+  - store-assets-shot1.png  # 2560×1600 — menu bar batteries + dropdown (real UI captures)
+
+release_notes: "Initial release."

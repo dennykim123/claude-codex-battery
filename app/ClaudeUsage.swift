@@ -28,20 +28,51 @@ private let LEGACY_USAGE_FILES = [
   "\(HOME)/.claude/PAI/MEMORY/STATE/usage-cache.json",
 ]
 
-// Token exists only in the return value — never left in files, logs, or process arguments
+// Token exists only in the return value — never left in files, logs, or process arguments.
+// Cached in memory for the process lifetime so the Keychain is consulted at most once per
+// launch (an ad-hoc-signed build would otherwise re-prompt on every 2-minute refresh);
+// a denial backs off for an hour instead of nagging.
+private var cachedClaudeToken: String?
+private var claudeTokenDeniedUntil: Int = 0
+
+func invalidateClaudeToken() { cachedClaudeToken = nil }
+
 private func readClaudeToken() -> String? {
   if liveDisabled() { return nil }
+  if let t = cachedClaudeToken { return t }
+  if Int(Date().timeIntervalSince1970) < claudeTokenDeniedUntil { return nil }
+#if MAS_BUILD
+  // Sandboxed: query the Keychain item directly (user approves an access prompt once)
+  let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                          kSecAttrService as String: "Claude Code-credentials",
+                          kSecReturnData as String: true,
+                          kSecMatchLimit as String: kSecMatchLimitOne]
+  var out: CFTypeRef?
+  if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+     let d = out as? Data,
+     let obj = try? JSONSerialization.jsonObject(with: d),
+     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
+    cachedClaudeToken = t
+    return t
+  }
+  claudeTokenDeniedUntil = Int(Date().timeIntervalSince1970) + 3600
+  return nil
+#else
   if let raw = runCmd("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], timeout: 3),
      let obj = try? JSONSerialization.jsonObject(with: Data(raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8)),
      let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
+    cachedClaudeToken = t
     return t
   }
   // For environments without a keychain — Claude Code's file-based credentials
   if let obj = readJSONFile("\(HOME)/.claude/.credentials.json"),
      let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
+    cachedClaudeToken = t
     return t
   }
+  claudeTokenDeniedUntil = Int(Date().timeIntervalSince1970) + 3600
   return nil
+#endif
 }
 
 private func fetchLive(now: Int) -> (data: [String: Any], measuredAt: Int, live: Bool)? {
@@ -51,7 +82,7 @@ private func fetchLive(now: Int) -> (data: [String: Any], measuredAt: Int, live:
                                     "anthropic-beta": "oauth-2025-04-20"], timeout: 5),
         let obj = jd(try? JSONSerialization.jsonObject(with: raw)),
         obj["five_hour"] != nil
-  else { return nil }
+  else { invalidateClaudeToken(); return nil }
   writeJSONFile(USAGE_CACHE, ["fetchedAt": now, "data": obj])
   return (obj, now, true)
 }

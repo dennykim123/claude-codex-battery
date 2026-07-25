@@ -143,6 +143,33 @@ private let TR: [String: [String: String]] = [
   ],
   "Slime": ["ko": "슬라임", "ja": "スライム", "zh-Hans": "史莱姆", "zh-Hant": "史萊姆", "es": "Slime"],
   "Off": ["ko": "끄기", "ja": "オフ", "zh-Hans": "关闭", "zh-Hant": "關閉", "es": "Desactivado"],
+  "Select your ~/.codex folder to show Codex batteries": [
+    "ko": "Codex 배터리를 표시하려면 ~/.codex 폴더를 선택하세요",
+    "ja": "Codexバッテリーを表示するには ~/.codex フォルダを選択してください",
+    "zh-Hans": "选择 ~/.codex 文件夹以显示 Codex 电池",
+    "zh-Hant": "選擇 ~/.codex 資料夾以顯示 Codex 電池",
+    "es": "Selecciona tu carpeta ~/.codex para mostrar las baterías de Codex",
+  ],
+  "Grant Access": [
+    "ko": "접근 허용", "ja": "アクセスを許可", "zh-Hans": "授予访问", "zh-Hant": "授予存取",
+    "es": "Conceder acceso",
+  ],
+  "Connect Codex folder…": [
+    "ko": "Codex 폴더 연결…", "ja": "Codexフォルダを接続…", "zh-Hans": "连接 Codex 文件夹…",
+    "zh-Hant": "連接 Codex 資料夾…", "es": "Conectar carpeta de Codex…",
+  ],
+  "Show Codex batteries too?": [
+    "ko": "Codex 배터리도 표시할까요?", "ja": "Codexバッテリーも表示しますか？",
+    "zh-Hans": "也显示 Codex 电池吗？", "zh-Hant": "也顯示 Codex 電池嗎？",
+    "es": "¿Mostrar también las baterías de Codex?",
+  ],
+  "Grant one-time access to your ~/.codex folder so the app can read your Codex login. You can do this later from Settings.": [
+    "ko": "앱이 Codex 로그인을 읽을 수 있도록 ~/.codex 폴더 접근을 한 번만 허용해 주세요. 나중에 설정에서도 할 수 있습니다.",
+    "ja": "アプリがCodexのログインを読めるよう、~/.codex フォルダへのアクセスを一度だけ許可してください。後で設定からも行えます。",
+    "zh-Hans": "请一次性授予 ~/.codex 文件夹的访问权限，以便应用读取您的 Codex 登录。之后也可在设置中进行。",
+    "zh-Hant": "請一次性授予 ~/.codex 資料夾的存取權限，以便應用讀取您的 Codex 登入。之後也可在設定中進行。",
+    "es": "Concede acceso una sola vez a tu carpeta ~/.codex para que la app pueda leer tu sesión de Codex. También puedes hacerlo luego en Ajustes.",
+  ],
   "Battery size": [
     "ko": "배터리 크기", "ja": "バッテリーサイズ", "zh-Hans": "电池大小", "zh-Hant": "電池大小",
     "es": "Tamaño de batería",

@@ -193,6 +193,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+#if MAS_BUILD
+  // One-time offer to grant ~/.codex access (sandbox requires an explicit user grant)
+  func maybeOfferCodexConnection() {
+    guard codexGrantedURL() == nil,
+          !UserDefaults.standard.bool(forKey: "askedCodexAccess") else { return }
+    UserDefaults.standard.set(true, forKey: "askedCodexAccess")
+    guard FileManager.default.fileExists(atPath: realHomeDir() + "/.codex") else { return }
+    let a = NSAlert()
+    a.messageText = tr("Show Codex batteries too?")
+    a.informativeText = tr("Grant one-time access to your ~/.codex folder so the app can read your Codex login. You can do this later from Settings.")
+    a.addButton(withTitle: tr("Grant Access"))
+    a.addButton(withTitle: tr("Later"))
+    if a.runModal() == .alertFirstButtonReturn, promptCodexAccess() { refresh() }
+  }
+
+  @objc func connectCodex() {
+    if promptCodexAccess() { refresh() }
+  }
+#endif
+
   @objc func refresh() {
     DispatchQueue.global(qos: .utility).async { [weak self] in
       let snap = collectSnapshot()
@@ -284,11 +304,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Onboarding runs only after the first render has hit the screen — so the modal doesn't block the data from showing
     if !promptShown {
       promptShown = true
-      DispatchQueue.main.async { [weak self] in self?.firstRunAutoStartPrompt() }
+      DispatchQueue.main.async { [weak self] in
+        self?.firstRunAutoStartPrompt()
+#if MAS_BUILD
+        self?.maybeOfferCodexConnection()
+#endif
+      }
     }
   }
 
   private var menuPopped = false
+  private var backdropWindow: NSWindow?
 
   private var promptShown = false
 
@@ -373,6 +399,10 @@ if let idx = CommandLine.arguments.firstIndex(of: "--render-glint"), CommandLine
 
 // ── --self-update: checks the latest version and installs it immediately (for headless verification/manual updates) ──
 if CommandLine.arguments.contains("--self-update") {
+#if MAS_BUILD
+  print("self-update is unavailable in the App Store build — updates come from the App Store")
+  exit(1)
+#endif
   guard let latest = fetchLatestVersion() else { print("version check failed"); exit(1) }
   if cmpVer(latest, APP_VERSION) > 0 {
     do {

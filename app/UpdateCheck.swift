@@ -25,6 +25,9 @@ func fetchLatestVersion() -> String? {
 }
 
 func getUpdateInfo(now: Int) -> (latest: String?, hasUpdate: Bool) {
+#if MAS_BUILD
+  return (nil, false) // the App Store owns updates
+#endif
   let cache = jd(readJSONFile(UPDATE_CACHE))
   let age = cache.flatMap { jn($0["checkedAt"]) }.map { now - Int($0) } ?? Int.max
   if age > 24 * 3600 {

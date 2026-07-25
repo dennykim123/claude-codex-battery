@@ -2,7 +2,13 @@
 import Cocoa
 
 let HOME = NSHomeDirectory()
+#if MAS_BUILD
+// Sandboxed: state lives in the app container (no shared SwiftBar cache)
+let STATE_DIR = (NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first
+  ?? NSTemporaryDirectory()) + "/ClaudeCodexBattery"
+#else
 let STATE_DIR = "\(HOME)/.claude/swiftbar" // Shares cache/settings with the SwiftBar widget (same file format)
+#endif
 let REPO_URL = "https://github.com/dennykim123/claude-codex-battery"
 let APP_VERSION = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
 

@@ -24,7 +24,13 @@ let MODEL_NAMES: [String: String] = [
 ]
 func shortModel(_ n: String) -> String { MODEL_NAMES[n] ?? n.replacingOccurrences(of: "claude-", with: "") }
 
-func ccusagePath() -> String? { findBin("ccusage") }
+func ccusagePath() -> String? {
+#if MAS_BUILD
+  return nil // sandbox forbids launching external binaries
+#else
+  return findBin("ccusage")
+#endif
+}
 
 // Active 5-hour block (ccusage blocks --active)
 func getClaudeBlock(now: Int) -> ClaudeBlock? {

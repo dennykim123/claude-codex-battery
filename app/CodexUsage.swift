@@ -35,9 +35,16 @@ private let CODEX_CACHE = "\(STATE_DIR)/.codex-usage.json"
 
 private func readCodexToken() -> (token: String, account: String)? {
   if liveDisabled() { return nil }
+#if MAS_BUILD
+  guard let data = readCodexFile("auth.json"),
+        let d = jd(try? JSONSerialization.jsonObject(with: data)),
+        let t = jstr(jd(d["tokens"])?["access_token"]) else { return nil }
+  return (t, jstr(jd(d["tokens"])?["account_id"]) ?? "")
+#else
   guard let d = jd(readJSONFile(CODEX_AUTH)),
         let t = jstr(jd(d["tokens"])?["access_token"]) else { return nil }
   return (t, jstr(jd(d["tokens"])?["account_id"]) ?? "")
+#endif
 }
 
 private func parseWindow(_ a: Any?, resetKey: String) -> CodexWindow? {
@@ -100,17 +107,27 @@ private func saveCache(_ u: CodexUsage) {
 
 // Fallback 1: scan rate_limits from the freshest session log (.jsonl)
 private func codexFromSessions() -> CodexUsage? {
+#if MAS_BUILD
+  var files: [(path: String, mtime: Int, data: () -> String?)] = codexSessionFiles().map { f in
+    (f.path.path, f.mtime, { () -> String? in
+      guard let base = codexGrantedURL(), base.startAccessingSecurityScopedResource() else { return nil }
+      defer { base.stopAccessingSecurityScopedResource() }
+      return try? String(contentsOf: f.path, encoding: .utf8)
+    })
+  }
+#else
   guard FileManager.default.fileExists(atPath: CODEX_SESSIONS) else { return nil }
-  var files: [(path: String, mtime: Int)] = []
+  var files: [(path: String, mtime: Int, data: () -> String?)] = []
   if let en = FileManager.default.enumerator(atPath: CODEX_SESSIONS) {
     for case let rel as String in en where rel.hasSuffix(".jsonl") {
       let p = CODEX_SESSIONS + "/" + rel
-      files.append((p, fileMtime(p)))
+      files.append((p, fileMtime(p), { try? String(contentsOfFile: p, encoding: .utf8) }))
     }
   }
+#endif
   files.sort { $0.mtime > $1.mtime }
   for f in files.prefix(8) {
-    guard let content = try? String(contentsOfFile: f.path, encoding: .utf8) else { continue }
+    guard let content = f.data() else { continue }
     let lines = content.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
     for line in lines.reversed() {
       guard line.contains("rate_limits"),

@@ -177,6 +177,12 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
         state: target.loginItemEnabled ? .on : .off)
   }
   settings.addItem(.separator())
+#if MAS_BUILD
+  if codexGrantedURL() == nil {
+    row(settings, tr("Connect Codex folder…"),
+        action: #selector(AppDelegate.connectCodex), target: target)
+  }
+#endif
   if snap.block != nil {
     row(settings, tr("Open ccusage dashboard"), action: #selector(AppDelegate.openDashboard), target: target)
   }
