@@ -95,6 +95,21 @@ It's a native Swift port of the same widget: identical battery rendering, identi
 
 **Optional pixel mascot** <img src="docs/cat-styles.png" align="right" width="120" alt="Mascot styles"> — **Settings → Cat** adds a tiny companion next to the batteries (off by default): a wide cat face with pink blush, a slim cat face, or an RPG slime. It emotes about your burn rate — asleep when idle, focused while you work, ears on fire during heavy burn, sweating when you're projected to hit 0% before the window resets, and sparkling when every battery is golden. The dropdown also gains a **🏁 lap row**: reach the 5-hour reset without running empty.
 
+### Option 3 — Linux & Chromebook (terminal battery)
+
+The same script doubles as a terminal battery on Linux — including **Chromebook Crostini**, where Claude Code lives in the Linux container anyway. Requires [bun](https://bun.sh).
+
+```bash
+git clone https://github.com/dennykim123/claude-codex-battery.git
+cd claude-codex-battery
+./ccb            # full gauges with reset countdowns
+./ccb --statusline   # one compact ANSI line
+./ccb --tmux         # tmux status-right format
+./ccb --json         # waybar custom-module JSON
+```
+
+tmux example: `set -g status-right '#(~/claude-codex-battery/ccb --tmux)'` with `status-interval 120`. On Linux the Claude login is read from `~/.claude/.credentials.json` (no Keychain needed); Codex from `~/.codex` as usual.
+
 ### Option 2 — SwiftBar plugin (single auditable script)
 
 ```bash

@@ -51,6 +51,10 @@ const UI_LANG = (() => {
     const n = normLang(readFileSync(LANG_FILE_PATH, "utf8").trim());
     if (SUPPORTED_LANGS.includes(n)) return n;
   } catch {}
+  if (process.platform !== "darwin" && process.env.LANG) {
+    const n = normLang(process.env.LANG);
+    if (SUPPORTED_LANGS.includes(n)) return n;
+  }
   try {
     const out = execSync("defaults read -g AppleLanguages 2>/dev/null", {
       encoding: "utf8",
@@ -279,7 +283,7 @@ const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── Auto-update (notification + one click) ──
-const VERSION = "2.5.2";
+const VERSION = "2.6.0";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -707,6 +711,7 @@ function readClaudeToken() {
   // — clicking 'Deny' on the Keychain prompt would re-prompt every 2 minutes; use this instead.
   if (existsSync(`${CLAUDE_STATE_DIR}/.no-live`)) return null;
   try {
+    if (process.platform !== "darwin") throw new Error("no keychain");
     const raw = execSync(
       'security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null',
       { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] },
@@ -972,6 +977,64 @@ const out = [];
 //   Claude: C5=5h session · CW=weekly · CF=Fable weekly
 //   Codex:  X5=5h · XW=weekly
 const rem = (pct) => (pct == null ? null : Math.max(0, 100 - pct));
+
+// ── Terminal output modes (Linux/Chromebook & terminal fans): --cli · --statusline · --tmux · --json ──
+const CLI_MODE = process.argv.includes("--json")
+  ? "json"
+  : process.argv.includes("--tmux")
+    ? "tmux"
+    : process.argv.includes("--statusline")
+      ? "line"
+      : process.argv.includes("--cli")
+        ? "cli"
+        : null;
+if (CLI_MODE) {
+  const rows = [];
+  const resetTxt = (ts) =>
+    ts ? (ts < now ? L("리셋됨", "reset") : `${L("리셋", "resets")} ${fmtDur(ts - now)}`) : "";
+  if (cusage) {
+    if (cusage.fiveHour) rows.push({ label: "C5", remain: rem(cusage.fiveHour.pct), reset: resetTxt(cusage.fiveHour.resetsAt) });
+    if (cusage.weekly) rows.push({ label: "CW", remain: rem(cusage.weekly.pct), reset: resetTxt(cusage.weekly.resetsAt) });
+    if (cusage.fable) rows.push({ label: "CF", remain: rem(cusage.fable.pct), reset: resetTxt(cusage.fable.resetsAt) });
+  } else if (claude && !claude.error) {
+    rows.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct), reset: `${L("리셋", "resets")} ${fmtDur(claude.remainMin * 60)}` });
+  }
+  if (codex && (codex.primary || codex.secondary)) {
+    const p = windowState(codex.primary);
+    const s = windowState(codex.secondary);
+    const wReset = (w) => (w.stale ? L("리셋됨", "reset") : w.resetsIn != null ? `${L("리셋", "resets")} ${fmtDur(w.resetsIn)}` : "");
+    if (p) rows.push({ label: "X5", remain: Math.max(0, 100 - p.pct), reset: wReset(p) });
+    if (s) rows.push({ label: "XW", remain: Math.max(0, 100 - s.pct), reset: wReset(s) });
+  } else if (codex && codex.credits) {
+    const cr = codex.credits;
+    rows.push({ label: "X", remain: cr.unlimited || (cr.has_credits && Number(cr.balance) > 0) ? 100 : 0, reset: "" });
+  }
+  const ansi = (r) =>
+    r == null ? "\x1b[90m" : Math.round(r) >= 100 ? "\x1b[93m" : r <= 20 ? "\x1b[31m" : r < 50 ? "\x1b[33m" : "\x1b[32m";
+  const R = "\x1b[0m";
+  const pct = (r) => (r == null ? "--" : `${Math.round(r)}%`);
+  if (CLI_MODE === "cli") {
+    for (const r of rows) {
+      const v = r.remain == null ? " --" : String(Math.round(r.remain)).padStart(3);
+      console.log(`${r.label.padEnd(2)} ${ansi(r.remain)}▕${bar(r.remain ?? 0, 20)}▏${v}%${R}  ${r.reset}`);
+    }
+    if (!rows.length) console.log(L("데이터 없음 — Claude Code/Codex 로그인 확인", "no data — check Claude Code/Codex login"));
+  } else if (CLI_MODE === "line") {
+    console.log(rows.map((r) => `${ansi(r.remain)}${r.label} ${pct(r.remain)}${R}`).join(" "));
+  } else if (CLI_MODE === "tmux") {
+    const tc = (r) =>
+      r == null ? "colour244" : Math.round(r) >= 100 ? "colour220" : r <= 20 ? "colour196" : r < 50 ? "colour178" : "colour77";
+    console.log(rows.map((r) => `#[fg=${tc(r.remain)}]${r.label} ${pct(r.remain)}`).join(" ") + "#[fg=default]");
+  } else {
+    const worst = rows.length ? Math.min(...rows.map((r) => r.remain ?? 100)) : 100;
+    console.log(JSON.stringify({
+      text: rows.map((r) => `${r.label} ${pct(r.remain)}`).join(" "),
+      tooltip: rows.map((r) => `${r.label} ${pct(r.remain)}${r.reset ? ` (${r.reset})` : ""}`).join("\n"),
+      class: worst <= 20 ? "critical" : worst < 50 ? "warning" : "good",
+    }));
+  }
+  process.exit(0);
+}
 // Single-service users: only show the service that has data
 const hasClaude = !!cusage || !!(claude && !claude.error);
 const hasCodex = !!codex;

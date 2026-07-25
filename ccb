@@ -1,0 +1,6 @@
+#!/bin/sh
+# ccb — terminal battery for Claude Code / Codex limits.
+# Works on Linux (including Chromebook Crostini) and macOS. Requires bun.
+# Modes: (default) full gauges · --statusline · --tmux · --json (waybar)
+DIR="$(cd "$(dirname "$0")" && pwd)"
+exec bun "$DIR/claude-codex-usage.2m.js" "${@:---cli}"
