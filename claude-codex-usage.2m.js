@@ -145,6 +145,12 @@ const TR3 = {
     "zh-Hant": "{0} 前的快取（備援 — 請檢查 Claude Code 登入/網路）",
     es: "caché de hace {0} (respaldo — revisa sesión/red de Claude Code)",
   },
+  "measured {0} ago (local session log)": {
+    ja: "{0}前に測定 (ローカルセッションログ)",
+    "zh-Hans": "{0} 前测量（本地会话日志）",
+    "zh-Hant": "{0} 前測量（本機工作階段日誌）",
+    es: "medido hace {0} (registro de sesión local)",
+  },
   "live query failed — check login/network (local log from {0} ago)": {
     ja: "ライブ取得失敗 — ログイン/ネットワークを確認 ({0}前のローカルログ)",
     "zh-Hans": "实时查询失败 — 请检查登录/网络（{0} 前的本地日志）",
@@ -1262,7 +1268,10 @@ if (hasCodex) {
   out.push(
     codex.live
       ? `${L("라이브 (ChatGPT usage API — 전 디바이스 합산)", "live (ChatGPT usage API — all devices combined)")} | size=11 color=#8b949e`
-      : `⚠ ${tf("라이브 조회 실패 — 로그인·네트워크 확인 ({0} 전 로컬 로그값)", "live query failed — check login/network (local log from {0} ago)", fmtDur(age))} | size=11 color=#d29922`,
+      : existsSync(`${CLAUDE_STATE_DIR}/.no-live`)
+        ? // deliberate opt-out (.no-live): local session logs are the intended source, not an error
+          `${tf("측정 {0} 전 (로컬 세션 로그)", "measured {0} ago (local session log)", fmtDur(age))} | size=11 color=#8b949e`
+        : `⚠ ${tf("라이브 조회 실패 — 로그인·네트워크 확인 ({0} 전 로컬 로그값)", "live query failed — check login/network (local log from {0} ago)", fmtDur(age))} | size=11 color=#d29922`,
   );
   out.push("---");
 }
