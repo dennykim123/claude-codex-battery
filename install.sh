@@ -3,6 +3,13 @@
 set -e
 cd "$(dirname "$0")"
 
+# --statusline-hook (off by default): fully local C-battery source for users who
+# don't want Keychain access or live usage-API calls. See step 5b.
+STATUSLINE_HOOK=0
+for arg in "$@"; do
+  [ "$arg" = "--statusline-hook" ] && STATUSLINE_HOOK=1
+done
+
 echo "🔋 Claude & Codex Usage Battery — Install"
 echo "────────────────────────────────────"
 
@@ -46,6 +53,29 @@ chmod +x "$PLUGIN_DIR/claude-codex-usage.2m.js"
 cp ccb-update.sh "$PLUGIN_DIR/.ccb-update.sh"
 chmod +x "$PLUGIN_DIR/.ccb-update.sh"
 echo "✅ Plugin deployed: $PLUGIN_DIR"
+
+# 5b) Optional statusline-hook source (--statusline-hook, off by default).
+#     Claude Code pipes rate_limits to the statusLine command's stdin — its only
+#     network-free outlet for that data. The hook caches it for the widget, then
+#     runs the user's original statusline unchanged. Creating .no-live disables
+#     all live queries (Codex falls back to session logs).
+if [ "$STATUSLINE_HOOK" = "1" ]; then
+  cp ccb-limits-cache.js "$PLUGIN_DIR/.ccb-limits-cache.js"
+  if [ -d "$HOME/.claude" ]; then
+    if "$BUN" "$PLUGIN_DIR/.ccb-limits-cache.js" --install; then
+      mkdir -p "$HOME/.claude/swiftbar"
+      touch "$HOME/.claude/swiftbar/.no-live"
+      # drop the stale live-response cache so the hook's fresher data wins the fallback chain
+      rm -f "$HOME/.claude/swiftbar/.claude-usage.json"
+      echo "✅ statusline hook wired + live queries disabled (.no-live)"
+      echo "   C batteries update from Claude Code's statusline feed while a session is running"
+    else
+      echo "⚠️  statusline hook wiring failed — check ~/.claude/settings.json (falling back to live queries)"
+    fi
+  else
+    echo "⚠️  --statusline-hook: ~/.claude not found — is Claude Code installed?"
+  fi
+fi
 
 # 6) Point SwiftBar at the folder + launch
 BID=$(defaults read /Applications/SwiftBar.app/Contents/Info CFBundleIdentifier 2>/dev/null || echo "com.ameba.SwiftBar")
