@@ -224,11 +224,11 @@ const TR3 = {
     "zh-Hant": "電池大小",
     es: "tamaño de batería",
   },
-  "big (default)": {
-    ja: "大 (標準)",
-    "zh-Hans": "大（默认）",
-    "zh-Hant": "大（預設）",
-    es: "grande (predet.)",
+  "small (default)": {
+    ja: "小 (標準)",
+    "zh-Hans": "小（默认）",
+    "zh-Hant": "小（預設）",
+    es: "pequeño (predet.)",
   },
   small: { ja: "小", "zh-Hans": "小", "zh-Hant": "小", es: "pequeño" },
   big: { ja: "大", "zh-Hans": "大", "zh-Hant": "大", es: "grande" },
@@ -283,7 +283,7 @@ const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── Auto-update (notification + one click) ──
-const VERSION = "2.6.1";
+const VERSION = "2.6.2";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -400,9 +400,9 @@ const _stroke = (cv, x, y, rw, rh, col) => {
 };
 // ── Size presets: big (default) / small — toggled via the dropdown row or ~/.claude/swiftbar/.batt-size ──
 const SIZE_FILE = `${HOME}/.claude/swiftbar/.batt-size`;
-let SIZE = "big";
+let SIZE = "small";
 try {
-  if (readFileSync(SIZE_FILE, "utf8").trim() === "small") SIZE = "small";
+  if (readFileSync(SIZE_FILE, "utf8").trim() === "big") SIZE = "big";
 } catch {}
 
 // 4x6 pixel font (big preset)
@@ -1287,7 +1287,7 @@ out.push(
 {
   const other = SIZE === "big" ? "small" : "big";
   const cur =
-    SIZE === "big" ? L("크게 (기본)", "big (default)") : L("작게", "small");
+    SIZE === "big" ? L("크게", "big") : L("작게 (기본)", "small (default)");
   const next = other === "big" ? L("크게", "big") : L("작게", "small");
   out.push(
     `↕ ${L("배터리 크기", "battery size")}: ${cur} — ${L("클릭하면", "click for")} ${next} | bash=/bin/sh param1=-c param2="mkdir -p '${HOME}/.claude/swiftbar' && echo ${other} > '${SIZE_FILE}'" terminal=false refresh=true size=11 color=#8b949e`,

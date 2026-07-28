@@ -54,7 +54,7 @@ let SIZE_FILE = "\(STATE_DIR)/.batt-size"
 func currentBattSize() -> String {
   let s = (try? String(contentsOfFile: SIZE_FILE, encoding: .utf8))?
     .trimmingCharacters(in: .whitespacesAndNewlines)
-  return s == "small" ? "small" : "big"
+  return s == "big" ? "big" : "small"
 }
 
 private typealias RGB = (r: UInt8, g: UInt8, b: UInt8)

@@ -198,7 +198,7 @@ Both queries are read-only and cost **no tokens** — you never have to *use* Cl
 | Want to change | Where |
 |---|---|
 | Refresh interval | filename `.2m.` → `.1m.`, `.5m.`, `.30s.`, … |
-| Battery size | **↕ row in the dropdown** — toggles between big (4×6 font, default) and small (3×5 font, ~25% narrower); stored in `~/.claude/swiftbar/.batt-size` |
+| Battery size | **↕ row in the dropdown** — toggles between small (3×5 font, default) and big (4×6 font); stored in `~/.claude/swiftbar/.batt-size` |
 | Color thresholds | `heatRemain` / `heatRemainHex` (20 % / 50 %) |
 | Disable live Claude + Codex APIs (Keychain / token access) | `touch ~/.claude/swiftbar/.no-live` (falls back to local cache files) |
 | Which Claude limits to show | the `battItems.push(...)` block |
