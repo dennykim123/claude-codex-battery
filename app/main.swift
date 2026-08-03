@@ -169,8 +169,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     guard let snap = lastSnap, let btn = statusItem.button else { return }
     let items = battItems(snap)
     let dark = btn.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-    var frames = glintFrames(items: items, dark: dark, cat: catState(snap))
-    guard !frames.isEmpty, let final = renderBatteryImage(dark: dark, items: items) else { return }
+    let st = catState(snap)
+    var frames = glintFrames(items: items, dark: dark, cat: st)
+    guard !frames.isEmpty,
+          let final = renderBatteryImage(dark: dark, items: items, cat: st, catFrameIndex: catIdx)
+    else { return }
     frames.append(final)
     let interval = ProcessInfo.processInfo.environment["CCB_ANIM_INTERVAL"].flatMap(Double.init) ?? 0.045
     playFrames(frames, interval: interval)
