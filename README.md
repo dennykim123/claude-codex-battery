@@ -169,6 +169,16 @@ To turn the check off entirely, comment out the `getUpdateInfo()` call near the 
 - **No conversation content.** From the Codex session-log fallback it parses only the `rate_limits` object (numbers), never the messages.
 - **Auditable in one sitting.** The whole widget is a single dependency-free script — grep for `curl`/`fetch` and you've seen every network call it can make.
 
+### Fully local mode (`--statusline-hook`)
+
+If you'd rather the widget never touch the Keychain *and* never call the usage APIs, install with:
+
+```bash
+./install.sh --statusline-hook
+```
+
+This creates `~/.claude/swiftbar/.no-live` (disables both live queries; Codex falls back to session logs) and wires a small hook into Claude Code's `statusLine` (`~/.claude/settings.json`, backed up to `settings.json.ccb-bak`). Claude Code pipes `rate_limits` to the statusline while a session runs — its only network-free outlet for that data — and the hook caches it at `~/.claude/swiftbar/usage-cache.json` for the widget, passing your existing statusline through untouched. Trade-offs: numbers update only while a Claude Code session is running, reflect this Mac's login rather than combining devices, and the Fable battery is not available (the statusline feed carries only the two plan-wide windows).
+
 ---
 
 ## How accurate / in-sync is it?
@@ -200,7 +210,7 @@ Both queries are read-only and cost **no tokens** — you never have to *use* Cl
 | Refresh interval | filename `.2m.` → `.1m.`, `.5m.`, `.30s.`, … |
 | Battery size | **↕ row in the dropdown** — toggles between small (3×5 font, default) and big (4×6 font); stored in `~/.claude/swiftbar/.batt-size` |
 | Color thresholds | `heatRemain` / `heatRemainHex` (20 % / 50 %) |
-| Disable live Claude + Codex APIs (Keychain / token access) | `touch ~/.claude/swiftbar/.no-live` (falls back to local cache files) |
+| Disable live Claude + Codex APIs (Keychain / token access) | `touch ~/.claude/swiftbar/.no-live` (falls back to local cache files), or `./install.sh --statusline-hook` for a [fully local Claude source](#fully-local-mode---statusline-hook) |
 | Which Claude limits to show | the `battItems.push(...)` block |
 
 ---

@@ -133,11 +133,23 @@ const TR3 = {
     "zh-Hant": "即時（ChatGPT usage API — 所有裝置合計）",
     es: "en vivo (ChatGPT usage API — todos los dispositivos)",
   },
+  "measured {0} ago (statusline feed — local, this Mac)": {
+    ja: "{0}前に測定 (statuslineフィード — ローカル·このMac)",
+    "zh-Hans": "{0} 前测量（statusline 数据源 — 本机）",
+    "zh-Hant": "{0} 前測量（statusline 資料來源 — 本機）",
+    es: "medido hace {0} (fuente statusline — local, este Mac)",
+  },
   "cached {0} ago (fallback — check Claude Code login/network)": {
     ja: "{0}前のキャッシュ (フォールバック — Claude Codeのログイン/ネットワークを確認)",
     "zh-Hans": "{0} 前的缓存（回退 — 请检查 Claude Code 登录/网络）",
     "zh-Hant": "{0} 前的快取（備援 — 請檢查 Claude Code 登入/網路）",
     es: "caché de hace {0} (respaldo — revisa sesión/red de Claude Code)",
+  },
+  "measured {0} ago (local session log)": {
+    ja: "{0}前に測定 (ローカルセッションログ)",
+    "zh-Hans": "{0} 前测量（本地会话日志）",
+    "zh-Hant": "{0} 前測量（本機工作階段日誌）",
+    es: "medido hace {0} (registro de sesión local)",
   },
   "live query failed — check login/network (local log from {0} ago)": {
     ja: "ライブ取得失敗 — ログイン/ネットワークを確認 ({0}前のローカルログ)",
@@ -701,6 +713,10 @@ const CLAUDE_USAGE_CACHE = `${CLAUDE_STATE_DIR}/.claude-usage.json`;
 const CODEX_AUTH = `${HOME}/.codex/auth.json`;
 const CODEX_USAGE_CACHE = `${CLAUDE_STATE_DIR}/.codex-usage.json`;
 const LEGACY_USAGE_FILES = [
+  // written by the optional statusline hook (install.sh --statusline-hook)
+  // for .no-live users — same shape as the API response, kept fresh while
+  // a Claude Code session is running
+  `${CLAUDE_STATE_DIR}/usage-cache.json`,
   `${HOME}/.claude/MEMORY/STATE/usage-cache.json`,
   `${HOME}/.claude/PAI/MEMORY/STATE/usage-cache.json`,
 ];
@@ -1169,7 +1185,10 @@ if (hasClaude) {
     out.push(
       cusage.live
         ? `${L("라이브 (Anthropic usage API — 전 디바이스 합산)", "live (Anthropic usage API — all devices combined)")} | size=11 color=#8b949e`
-        : `${tf("측정 {0} 전 (캐시 폴백 — Claude Code 로그인·네트워크 확인)", "cached {0} ago (fallback — check Claude Code login/network)", fmtDur(now - cusage.measuredAt))} | size=11 color=#d29922`,
+        : existsSync(`${CLAUDE_STATE_DIR}/.no-live`)
+          ? // deliberate opt-out (.no-live): the statusline hook is the intended source, not an error
+            `${tf("측정 {0} 전 (statusline 피드 — 로컬·이 Mac)", "measured {0} ago (statusline feed — local, this Mac)", fmtDur(now - cusage.measuredAt))} | size=11 color=#8b949e`
+          : `${tf("측정 {0} 전 (캐시 폴백 — Claude Code 로그인·네트워크 확인)", "cached {0} ago (fallback — check Claude Code login/network)", fmtDur(now - cusage.measuredAt))} | size=11 color=#d29922`,
     );
   }
   if (claude && !claude.error) {
@@ -1249,7 +1268,10 @@ if (hasCodex) {
   out.push(
     codex.live
       ? `${L("라이브 (ChatGPT usage API — 전 디바이스 합산)", "live (ChatGPT usage API — all devices combined)")} | size=11 color=#8b949e`
-      : `⚠ ${tf("라이브 조회 실패 — 로그인·네트워크 확인 ({0} 전 로컬 로그값)", "live query failed — check login/network (local log from {0} ago)", fmtDur(age))} | size=11 color=#d29922`,
+      : existsSync(`${CLAUDE_STATE_DIR}/.no-live`)
+        ? // deliberate opt-out (.no-live): local session logs are the intended source, not an error
+          `${tf("측정 {0} 전 (로컬 세션 로그)", "measured {0} ago (local session log)", fmtDur(age))} | size=11 color=#8b949e`
+        : `⚠ ${tf("라이브 조회 실패 — 로그인·네트워크 확인 ({0} 전 로컬 로그값)", "live query failed — check login/network (local log from {0} ago)", fmtDur(age))} | size=11 color=#d29922`,
   );
   out.push("---");
 }
