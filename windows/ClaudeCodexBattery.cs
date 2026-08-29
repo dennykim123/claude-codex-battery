@@ -1294,32 +1294,37 @@ namespace ClaudeCodexBattery
 
         public void UpdateUI()
         {
-            bool hasClaude5h = TrayApplicationContext.Claude5h.State != ConnectionState.NotConnected && metricVisibility.Claude5h;
-            bool hasClaudeWk = TrayApplicationContext.ClaudeWk.State != ConnectionState.NotConnected && metricVisibility.ClaudeWeek;
-            bool hasFableWk = TrayApplicationContext.FableWk.State != ConnectionState.NotConnected && metricVisibility.FableWeek;
-            bool hasCodex5h = TrayApplicationContext.Codex5h.State != ConnectionState.NotConnected && metricVisibility.Codex5h;
-            bool hasCodexWk = TrayApplicationContext.CodexWk.State != ConnectionState.NotConnected && metricVisibility.CodexWeek;
+            bool hasClaude5h = TrayApplicationContext.Claude5h.State != ConnectionState.NotConnected;
+            bool hasClaudeWk = TrayApplicationContext.ClaudeWk.State != ConnectionState.NotConnected;
+            bool hasFableWk = TrayApplicationContext.FableWk.State != ConnectionState.NotConnected;
+            bool hasCodex5h = TrayApplicationContext.Codex5h.State != ConnectionState.NotConnected;
+            bool hasCodexWk = TrayApplicationContext.CodexWk.State != ConnectionState.NotConnected;
             bool hasClaude = hasClaude5h || hasClaudeWk || hasFableWk;
             bool hasCodex = hasCodex5h || hasCodexWk;
+            bool showClaude5h = hasClaude5h && metricVisibility.Claude5h;
+            bool showClaudeWk = hasClaudeWk && metricVisibility.ClaudeWeek;
+            bool showFableWk = hasFableWk && metricVisibility.FableWeek;
+            bool showCodex5h = hasCodex5h && metricVisibility.Codex5h;
+            bool showCodexWk = hasCodexWk && metricVisibility.CodexWeek;
 
             int y = 36;
 
             if (hasClaude)
             {
-                pnlClaude5h.Visible = hasClaude5h;
-                pnlClaudeWk.Visible = hasClaudeWk;
-                pnlFableWk.Visible = hasFableWk;
-                if (hasClaude5h)
+                pnlClaude5h.Visible = showClaude5h;
+                pnlClaudeWk.Visible = showClaudeWk;
+                pnlFableWk.Visible = showFableWk;
+                if (showClaude5h)
                 {
                     pnlClaude5h.Location = new Point(10, y); y += 39;
                     UpdateRow(pnlClaude5h, lblClaude5h, TrayApplicationContext.Claude5h);
                 }
-                if (hasClaudeWk)
+                if (showClaudeWk)
                 {
                     pnlClaudeWk.Location = new Point(10, y); y += 39;
                     UpdateRow(pnlClaudeWk, lblClaudeWk, TrayApplicationContext.ClaudeWk);
                 }
-                if (hasFableWk)
+                if (showFableWk)
                 {
                     pnlFableWk.Location = new Point(10, y); y += 39;
                     UpdateRow(pnlFableWk, lblFableWk, TrayApplicationContext.FableWk);
@@ -1334,14 +1339,14 @@ namespace ClaudeCodexBattery
 
             if (hasCodex)
             {
-                pnlCodex5h.Visible = hasCodex5h;
-                pnlCodexWk.Visible = hasCodexWk;
-                if (hasCodex5h)
+                pnlCodex5h.Visible = showCodex5h;
+                pnlCodexWk.Visible = showCodexWk;
+                if (showCodex5h)
                 {
                     pnlCodex5h.Location = new Point(10, y); y += 39;
                     UpdateRow(pnlCodex5h, lblCodex5h, TrayApplicationContext.Codex5h);
                 }
-                if (hasCodexWk)
+                if (showCodexWk)
                 {
                     pnlCodexWk.Location = new Point(10, y); y += 39;
                     UpdateRow(pnlCodexWk, lblCodexWk, TrayApplicationContext.CodexWk);

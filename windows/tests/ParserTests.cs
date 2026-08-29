@@ -1,11 +1,14 @@
 using System;
 using System.IO;
+using System.Reflection;
+using System.Windows.Forms;
 using ClaudeCodexBattery;
 
 public static class ParserTests
 {
     private static int failures;
 
+    [STAThread]
     public static int Main()
     {
         TrayApplicationContext parser = new TrayApplicationContext(true);
@@ -133,7 +136,9 @@ public static class ParserTests
         AssertFalse(visibilityRoundTrip.Get("codex5h"), "Visibility round trip preserves Codex 5h");
         AssertTrue(visibilityRoundTrip.Get("claudeWeek"), "Visibility round trip preserves shown rows");
 
-        if (failures == 0) Console.WriteLine("Parser, refresh gate, cache, and settings tests passed.");
+        RunVisibleRowsTests();
+
+        if (failures == 0) Console.WriteLine("Parser, refresh gate, cache, settings, and dashboard tests passed.");
         return failures == 0 ? 0 : 1;
     }
 
@@ -144,6 +149,99 @@ public static class ParserTests
         TrayApplicationContext.FableWk = new BatteryData { Name = "Fable Week", WindowLabel = "FW" };
         TrayApplicationContext.Codex5h = new BatteryData { Name = "Codex 5h", WindowLabel = "X5" };
         TrayApplicationContext.CodexWk = new BatteryData { Name = "Codex Week", WindowLabel = "XW" };
+    }
+
+    private static void RunVisibleRowsTests()
+    {
+        AssertDashboard("Disconnected, all rows shown", false, false,
+            Visibility(true, true, true, true, true), "⚡ Usage Limits", "● Claude: Offline | Codex: Offline", 0);
+        AssertDashboard("Both connected, all rows hidden", true, true,
+            Visibility(false, false, false, false, false), "⚡ Claude · Codex", "● Live Claude | Live Codex", 0);
+        AssertDashboard("Both connected, some rows hidden", true, true,
+            Visibility(false, true, false, true, false), "⚡ Claude · Codex", "● Live Claude | Live Codex", 2);
+        AssertDashboard("Claude only, all rows shown", true, false,
+            Visibility(true, true, true, true, true), "⚡ Claude Limits", "● Status: Live Claude", 3);
+        AssertDashboard("Codex only, all rows shown", false, true,
+            Visibility(true, true, true, true, true), "⚡ Codex Limits", "● Status: Live Codex", 2);
+        AssertDashboard("Both connected, all rows shown", true, true,
+            Visibility(true, true, true, true, true), "⚡ Claude · Codex", "● Live Claude | Live Codex", 5);
+        AssertDashboard("Claude only, all rows hidden", true, false,
+            Visibility(false, false, false, false, false), "⚡ Claude Limits", "● Status: Live Claude", 0);
+        AssertDashboard("Codex only, all rows hidden", false, true,
+            Visibility(false, false, false, false, false), "⚡ Codex Limits", "● Status: Live Codex", 0);
+    }
+
+    private static void AssertDashboard(string name, bool claudeConnected, bool codexConnected,
+        MetricVisibilitySettings visibility, string expectedHeader, string expectedStatus, int expectedVisibleRows)
+    {
+        ResetUsage();
+        if (claudeConnected)
+        {
+            ConnectUsage(TrayApplicationContext.Claude5h, "Live Claude");
+            ConnectUsage(TrayApplicationContext.ClaudeWk, "Live Claude");
+            ConnectUsage(TrayApplicationContext.FableWk, "Live Claude");
+        }
+        if (codexConnected)
+        {
+            ConnectUsage(TrayApplicationContext.Codex5h, "Live Codex");
+            ConnectUsage(TrayApplicationContext.CodexWk, "Live Codex");
+        }
+
+        using (FlyoutForm form = new FlyoutForm(new TrayApplicationContext(true)))
+        {
+            GetFlyoutField("metricVisibility").SetValue(form, visibility);
+            form.UpdateUI();
+
+            string header = ((Label)GetFlyoutField("lblHeader").GetValue(form)).Text;
+            string status = ((Label)GetFlyoutField("lblStatus").GetValue(form)).Text;
+            int visibleRows = CountVisibleRows(form);
+            AssertEqual(expectedHeader, header, name + " header");
+            AssertEqual(expectedStatus, status, name + " status");
+            AssertEqual(expectedVisibleRows, visibleRows, name + " visible rows");
+            Console.WriteLine("Dashboard: {0} | header={1} | status={2} | visibleRows={3}",
+                name, header, status, visibleRows);
+        }
+    }
+
+    private static int CountVisibleRows(FlyoutForm form)
+    {
+        const int ControlStateVisible = 0x2;
+        int visibleRows = 0;
+        MethodInfo getState = typeof(Control).GetMethod("GetState", BindingFlags.NonPublic | BindingFlags.Instance);
+        foreach (string panelName in new string[]
+        {
+            "pnlClaude5h", "pnlClaudeWk", "pnlFableWk", "pnlCodex5h", "pnlCodexWk"
+        })
+        {
+            Panel panel = (Panel)GetFlyoutField(panelName).GetValue(form);
+            if ((bool)getState.Invoke(panel, new object[] { ControlStateVisible })) visibleRows++;
+        }
+        return visibleRows;
+    }
+
+    private static FieldInfo GetFlyoutField(string name)
+    {
+        return typeof(FlyoutForm).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
+    }
+
+    private static MetricVisibilitySettings Visibility(bool claude5h, bool claudeWeek, bool fableWeek,
+        bool codex5h, bool codexWeek)
+    {
+        MetricVisibilitySettings visibility = new MetricVisibilitySettings();
+        visibility.Set("claude5h", claude5h);
+        visibility.Set("claudeWeek", claudeWeek);
+        visibility.Set("fableWeek", fableWeek);
+        visibility.Set("codex5h", codex5h);
+        visibility.Set("codexWeek", codexWeek);
+        return visibility;
+    }
+
+    private static void ConnectUsage(BatteryData usage, string source)
+    {
+        usage.State = ConnectionState.Connected;
+        usage.PercentLeft = 75;
+        usage.ResetTimeStr = "1h";
+        usage.SourceInfo = source;
     }
 
     private static void AssertTrue(bool value, string name)
