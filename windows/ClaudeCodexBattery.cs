@@ -21,11 +21,138 @@ namespace ClaudeCodexBattery
         OfflineCached
     }
 
-    public enum MascotSkin
+    public enum UsageVisualState
     {
-        Slime,
-        Cat,
-        Classic
+        Unknown,
+        Normal,
+        Warning,
+        Critical
+    }
+
+    internal enum CharacterSurface
+    {
+        Tray,
+        Flyout,
+        Preview
+    }
+
+    internal sealed class CharacterRenderContext
+    {
+        public UsageVisualState State { get; private set; }
+        public int Frame { get; private set; }
+        public CharacterSurface Surface { get; private set; }
+        public bool ReducedMotion { get; private set; }
+
+        public CharacterRenderContext(UsageVisualState state, int frame, CharacterSurface surface, bool reducedMotion)
+        {
+            State = state;
+            Frame = reducedMotion || state == UsageVisualState.Unknown ? 0 : Math.Max(0, frame % 4);
+            Surface = surface;
+            ReducedMotion = reducedMotion;
+        }
+    }
+
+    internal interface ICharacterRenderer
+    {
+        void Draw(Graphics graphics, int x, int y, CharacterRenderContext context);
+    }
+
+    internal sealed class BuiltInCharacterRenderer : ICharacterRenderer
+    {
+        private readonly string characterId;
+
+        public BuiltInCharacterRenderer(string id)
+        {
+            characterId = id;
+        }
+
+        public void Draw(Graphics graphics, int x, int y, CharacterRenderContext context)
+        {
+            TrayApplicationContext.DrawCharacterById(characterId, graphics, x, y, context);
+        }
+    }
+
+    internal sealed class CharacterDefinition
+    {
+        public string Id { get; private set; }
+        public string DisplayName { get; private set; }
+        public ICharacterRenderer Renderer { get; private set; }
+
+        public CharacterDefinition(string id, string displayName, ICharacterRenderer renderer)
+        {
+            Id = id;
+            DisplayName = displayName;
+            Renderer = renderer;
+        }
+    }
+
+    internal static class UsageVisualStateResolver
+    {
+        public static UsageVisualState Resolve(int percentLeft)
+        {
+            if (percentLeft < 0) return UsageVisualState.Unknown;
+            if (percentLeft >= 50) return UsageVisualState.Normal;
+            if (percentLeft >= 20) return UsageVisualState.Warning;
+            return UsageVisualState.Critical;
+        }
+    }
+
+    internal static class CharacterRegistry
+    {
+        public const string ClassicId = "builtin:classic";
+        public const string DefaultId = "builtin:slime";
+
+        private static readonly List<CharacterDefinition> Characters = new List<CharacterDefinition>
+        {
+            Create("builtin:slime", "Bouncy Slime"),
+            Create("builtin:cat", "Kitsch Cat"),
+            Create("builtin:ghost", "Soft Ghost"),
+            Create("builtin:robot", "Battery Bot"),
+            Create("builtin:sprout", "Sproutling"),
+            Create("builtin:mushroom", "Mellow Mushroom")
+        };
+
+        public static IList<CharacterDefinition> All
+        {
+            get { return Characters.AsReadOnly(); }
+        }
+
+        private static CharacterDefinition Create(string id, string displayName)
+        {
+            return new CharacterDefinition(id, displayName, new BuiltInCharacterRenderer(id));
+        }
+
+        public static CharacterDefinition Find(string id)
+        {
+            string normalized = NormalizeSelectionId(id);
+            for (int i = 0; i < Characters.Count; i++)
+            {
+                if (string.Equals(Characters[i].Id, normalized, StringComparison.OrdinalIgnoreCase)) return Characters[i];
+            }
+            return Characters[0];
+        }
+
+        public static bool IsClassic(string id)
+        {
+            return string.Equals(NormalizeSelectionId(id), ClassicId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static string NormalizeSelectionId(string value)
+        {
+            string id = string.IsNullOrWhiteSpace(value) ? "" : value.Trim().ToLowerInvariant();
+            if (id == "classic" || id == ClassicId) return ClassicId;
+            if (id == "slime") id = "builtin:slime";
+            if (id == "cat") id = "builtin:cat";
+            if (id == "ghost") id = "builtin:ghost";
+            if (id == "robot") id = "builtin:robot";
+            if (id == "sprout") id = "builtin:sprout";
+            if (id == "mushroom") id = "builtin:mushroom";
+            for (int i = 0; i < Characters.Count; i++)
+            {
+                if (string.Equals(Characters[i].Id, id, StringComparison.OrdinalIgnoreCase)) return Characters[i].Id;
+            }
+            return DefaultId;
+        }
     }
 
     public class BatteryData
@@ -178,7 +305,9 @@ namespace ClaudeCodexBattery
         public static BatteryData FableWk = new BatteryData { Name = "Fable Week", WindowLabel = "FW" };
         public static BatteryData Codex5h = new BatteryData { Name = "Codex 5h", WindowLabel = "X5" };
         public static BatteryData CodexWk = new BatteryData { Name = "Codex Week", WindowLabel = "XW" };
-        public static MascotSkin CurrentSkin = MascotSkin.Slime;
+        public static string CurrentVisualId = CharacterRegistry.DefaultId;
+        public bool ReduceMotion { get; private set; }
+        internal int AnimationFrame { get { return ReduceMotion ? 0 : animFrame; } }
 
         internal TrayApplicationContext(bool skipInitialization)
         {
@@ -222,6 +351,7 @@ namespace ClaudeCodexBattery
             animTimer.Interval = 1000;
             animTimer.Tick += new EventHandler((s, e) =>
             {
+                if (ReduceMotion) return;
                 animFrame = (animFrame + 1) % 4;
                 UpdateTrayIcon();
                 if (flyoutForm != null && flyoutForm.Visible) flyoutForm.Invalidate();
@@ -250,14 +380,21 @@ namespace ClaudeCodexBattery
             menu.Items.Add("Refresh Now", null, new EventHandler((s, e) => RefreshData()));
             menu.Items.Add("-");
 
-            ToolStripMenuItem skinSubMenu = new ToolStripMenuItem("Mascot Skin Customization");
-            var itemSlime = new ToolStripMenuItem("🟢 RPG Bouncy Slime", null, (s, e) => ChangeSkin(MascotSkin.Slime));
-            var itemCat = new ToolStripMenuItem("🐱 Kitsch Pixel Cat", null, (s, e) => ChangeSkin(MascotSkin.Cat));
-            var itemClassic = new ToolStripMenuItem("🔋 Classic Dual Battery", null, (s, e) => ChangeSkin(MascotSkin.Classic));
-
-            skinSubMenu.DropDownItems.Add(itemSlime);
-            skinSubMenu.DropDownItems.Add(itemCat);
+            ToolStripMenuItem skinSubMenu = new ToolStripMenuItem("Mascot and icon style");
+            ToolStripMenuItem chooseMascotItem = new ToolStripMenuItem("Choose mascot...", null, (s, e) => ShowCharacterPicker());
+            chooseMascotItem.AccessibleName = "Choose mascot";
+            ToolStripMenuItem itemClassic = new ToolStripMenuItem("Classic dual battery", null,
+                (s, e) => ApplyVisualSelection(CharacterRegistry.ClassicId, ReduceMotion));
+            itemClassic.AccessibleName = "Classic dual battery without a mascot";
+            skinSubMenu.DropDownItems.Add(chooseMascotItem);
             skinSubMenu.DropDownItems.Add(itemClassic);
+            skinSubMenu.DropDownOpening += new EventHandler((s, e) =>
+            {
+                itemClassic.Checked = CharacterRegistry.IsClassic(CurrentVisualId);
+                CharacterDefinition selectedCharacter = CharacterRegistry.Find(CurrentVisualId);
+                chooseMascotItem.Text = CharacterRegistry.IsClassic(CurrentVisualId) ?
+                    "Choose mascot..." : "Choose mascot... (" + selectedCharacter.DisplayName + ")";
+            });
             menu.Items.Add(skinSubMenu);
 
             ToolStripMenuItem visibleRowsSubMenu = new ToolStripMenuItem("Visible usage rows");
@@ -336,12 +473,34 @@ namespace ClaudeCodexBattery
             return item;
         }
 
-        public void ChangeSkin(MascotSkin skin)
+        public void ShowCharacterPicker()
         {
-            CurrentSkin = skin;
+            using (CharacterPickerForm picker = new CharacterPickerForm(this, CurrentVisualId, ReduceMotion))
+            {
+                if (flyoutForm != null && flyoutForm.Visible) picker.ShowDialog(flyoutForm);
+                else picker.ShowDialog();
+            }
+        }
+
+        public void ApplyVisualSelection(string selectionId, bool reduceMotion)
+        {
+            CurrentVisualId = CharacterRegistry.NormalizeSelectionId(selectionId);
+            ReduceMotion = reduceMotion;
+            if (ReduceMotion) animFrame = 0;
             SaveSkinPreference();
+            if (flyoutForm != null) flyoutForm.SetReduceMotion(reduceMotion);
             UpdateTrayIcon();
-            if (flyoutForm != null) flyoutForm.UpdateUI();
+            if (flyoutForm != null)
+            {
+                flyoutForm.UpdateUI();
+                flyoutForm.Invalidate();
+            }
+        }
+
+        internal void LoadReduceMotion(bool reduceMotion)
+        {
+            ReduceMotion = reduceMotion;
+            if (ReduceMotion) animFrame = 0;
         }
 
         private void LoadSkinPreference()
@@ -351,10 +510,7 @@ namespace ClaudeCodexBattery
                 string skinFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "swiftbar", ".skin");
                 if (File.Exists(skinFile))
                 {
-                    string s = File.ReadAllText(skinFile).Trim().ToLower();
-                    if (s == "cat") CurrentSkin = MascotSkin.Cat;
-                    else if (s == "classic") CurrentSkin = MascotSkin.Classic;
-                    else CurrentSkin = MascotSkin.Slime;
+                    CurrentVisualId = CharacterRegistry.NormalizeSelectionId(File.ReadAllText(skinFile));
                 }
             }
             catch { }
@@ -366,7 +522,7 @@ namespace ClaudeCodexBattery
             {
                 string skinDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "swiftbar");
                 Directory.CreateDirectory(skinDir);
-                File.WriteAllText(Path.Combine(skinDir, ".skin"), CurrentSkin.ToString().ToLower());
+                File.WriteAllText(Path.Combine(skinDir, ".skin"), CurrentVisualId);
             }
             catch { }
         }
@@ -459,7 +615,7 @@ namespace ClaudeCodexBattery
                     g.SmoothingMode = SmoothingMode.AntiAlias;
                     g.Clear(Color.Transparent);
 
-                    if (CurrentSkin == MascotSkin.Classic)
+                    if (CharacterRegistry.IsClassic(CurrentVisualId))
                     {
                         using (GraphicsPath path = GetRoundedRect(new Rectangle(0, 0, 32, 32), 6))
                         using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(248, 15, 17, 26)))
@@ -473,16 +629,9 @@ namespace ClaudeCodexBattery
                     }
                     else
                     {
-                        int pct = activePct;
-
-                        if (CurrentSkin == MascotSkin.Slime)
-                        {
-                            DrawFullSizeSlime(g, 2, 2, pct, animFrame);
-                        }
-                        else
-                        {
-                            DrawFullSizeCat(g, 2, 2, pct, animFrame);
-                        }
+                        CharacterDefinition character = CharacterRegistry.Find(CurrentVisualId);
+                        DrawCharacter(character, g, 2, 2, UsageVisualStateResolver.Resolve(activePct),
+                            AnimationFrame, CharacterSurface.Tray, ReduceMotion);
                     }
                 }
 
@@ -507,6 +656,30 @@ namespace ClaudeCodexBattery
 
         [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
         private static extern bool DestroyIcon(IntPtr handle);
+
+        internal static void DrawCharacter(CharacterDefinition character, Graphics graphics, int x, int y,
+            UsageVisualState state, int frame, CharacterSurface surface, bool reducedMotion)
+        {
+            if (character == null) character = CharacterRegistry.Find(CharacterRegistry.DefaultId);
+            character.Renderer.Draw(graphics, x, y,
+                new CharacterRenderContext(state, frame, surface, reducedMotion));
+        }
+
+        internal static void DrawCharacterById(string id, Graphics graphics, int x, int y, CharacterRenderContext context)
+        {
+            int percent = context.State == UsageVisualState.Normal ? 75 :
+                          context.State == UsageVisualState.Warning ? 35 :
+                          context.State == UsageVisualState.Critical ? 10 : -1;
+            switch (id)
+            {
+                case "builtin:cat": DrawFullSizeCat(graphics, x, y, percent, context.Frame); break;
+                case "builtin:ghost": DrawFullSizeGhost(graphics, x, y, percent, context.Frame); break;
+                case "builtin:robot": DrawFullSizeRobot(graphics, x, y, percent, context.Frame); break;
+                case "builtin:sprout": DrawFullSizeSprout(graphics, x, y, percent, context.Frame); break;
+                case "builtin:mushroom": DrawFullSizeMushroom(graphics, x, y, percent, context.Frame); break;
+                default: DrawFullSizeSlime(graphics, x, y, percent, context.Frame); break;
+            }
+        }
 
         private void DrawGauge(Graphics g, int x, int y, int w, int h, int pct, string label)
         {
@@ -659,6 +832,211 @@ namespace ClaudeCodexBattery
                     g.DrawLine(pen, x - 1, y + 17 + bounceY, x + 4, y + 16 + bounceY);
                     g.DrawLine(pen, x + 24, y + 14 + bounceY, x + 29, y + 13 + bounceY);
                     g.DrawLine(pen, x + 24, y + 16 + bounceY, x + 29, y + 17 + bounceY);
+                }
+            }
+        }
+
+        public static void DrawFullSizeGhost(Graphics g, int x, int y, int pct, int frame)
+        {
+            int floatY = pct < 0 ? 0 : (frame % 2 == 1 ? -1 : 0);
+            Color body = pct < 0 ? Color.FromArgb(142, 148, 162) : Color.FromArgb(225, 232, 255);
+            Color shade = pct < 0 ? Color.FromArgb(105, 112, 126) : Color.FromArgb(176, 190, 235);
+            Color eye = Color.FromArgb(23, 27, 39);
+            using (SolidBrush bodyBrush = new SolidBrush(body))
+            using (SolidBrush shadeBrush = new SolidBrush(shade))
+            using (SolidBrush eyeBrush = new SolidBrush(eye))
+            {
+                g.FillEllipse(bodyBrush, x + 3, y + 1 + floatY, 22, 22);
+                g.FillRectangle(bodyBrush, x + 3, y + 12 + floatY, 22, 11);
+                g.FillEllipse(bodyBrush, x + 3, y + 18 + floatY, 8, 8);
+                g.FillEllipse(bodyBrush, x + 10, y + 20 + floatY, 8, 7);
+                g.FillEllipse(bodyBrush, x + 17, y + 18 + floatY, 8, 8);
+                g.FillEllipse(shadeBrush, x + 5, y + 4 + floatY, 6, 4);
+                if (pct < 0)
+                {
+                    g.FillRectangle(eyeBrush, x + 8, y + 10, 3, 2);
+                    g.FillRectangle(eyeBrush, x + 17, y + 10, 3, 2);
+                    g.FillRectangle(eyeBrush, x + 13, y + 14, 2, 5);
+                }
+                else if (pct >= 50)
+                {
+                    int eyeHeight = frame == 2 ? 2 : 5;
+                    g.FillRectangle(eyeBrush, x + 8, y + 9 + floatY, 3, eyeHeight);
+                    g.FillRectangle(eyeBrush, x + 17, y + 9 + floatY, 3, eyeHeight);
+                    g.FillRectangle(eyeBrush, x + 12, y + 16 + floatY, 4, 2);
+                }
+                else if (pct >= 20)
+                {
+                    g.FillRectangle(eyeBrush, x + 8, y + 10 + floatY, 3, 4);
+                    g.FillRectangle(eyeBrush, x + 17, y + 10 + floatY, 3, 4);
+                    using (SolidBrush sweat = new SolidBrush(Color.FromArgb(52, 152, 219)))
+                    {
+                        g.FillEllipse(sweat, x + 21, y + 5 + floatY, 4, 6);
+                    }
+                }
+                else
+                {
+                    using (Pen danger = new Pen(Color.FromArgb(231, 76, 60), 2))
+                    {
+                        g.DrawLine(danger, x + 7, y + 9 + floatY, x + 11, y + 13 + floatY);
+                        g.DrawLine(danger, x + 11, y + 9 + floatY, x + 7, y + 13 + floatY);
+                        g.DrawLine(danger, x + 17, y + 9 + floatY, x + 21, y + 13 + floatY);
+                        g.DrawLine(danger, x + 21, y + 9 + floatY, x + 17, y + 13 + floatY);
+                    }
+                    g.FillRectangle(eyeBrush, x + 12, y + 17 + floatY, 4, 3);
+                }
+            }
+        }
+
+        public static void DrawFullSizeRobot(Graphics g, int x, int y, int pct, int frame)
+        {
+            int bobY = pct >= 50 && frame % 2 == 1 ? -1 : 0;
+            Color shell = pct < 0 ? Color.FromArgb(120, 126, 140) : Color.FromArgb(191, 205, 235);
+            Color edge = pct < 0 ? Color.FromArgb(82, 88, 102) : Color.FromArgb(93, 117, 176);
+            Color screen = Color.FromArgb(23, 30, 43);
+            Color signal = pct < 0 ? Color.FromArgb(110, 118, 130) :
+                           pct >= 50 ? Color.FromArgb(46, 204, 113) :
+                           pct >= 20 ? Color.FromArgb(241, 196, 15) : Color.FromArgb(231, 76, 60);
+            using (SolidBrush shellBrush = new SolidBrush(shell))
+            using (SolidBrush edgeBrush = new SolidBrush(edge))
+            using (SolidBrush screenBrush = new SolidBrush(screen))
+            using (SolidBrush signalBrush = new SolidBrush(signal))
+            {
+                g.FillRectangle(edgeBrush, x + 12, y + bobY, 4, 4);
+                g.FillRectangle(signalBrush, x + 11, y + bobY, 6, 3);
+                g.FillRectangle(edgeBrush, x + 3, y + 4 + bobY, 22, 20);
+                g.FillRectangle(shellBrush, x + 5, y + 5 + bobY, 18, 17);
+                g.FillRectangle(screenBrush, x + 7, y + 8 + bobY, 14, 10);
+                g.FillRectangle(edgeBrush, x, y + 10 + bobY, 4, 10);
+                g.FillRectangle(edgeBrush, x + 24, y + 10 + bobY, 4, 10);
+                g.FillRectangle(edgeBrush, x + 6, y + 24 + bobY, 5, 3);
+                g.FillRectangle(edgeBrush, x + 17, y + 24 + bobY, 5, 3);
+                if (pct < 0)
+                {
+                    g.FillRectangle(signalBrush, x + 10, y + 12, 8, 2);
+                }
+                else if (pct < 20)
+                {
+                    g.FillRectangle(signalBrush, x + 9, y + 10 + bobY, 3, 3);
+                    g.FillRectangle(signalBrush, x + 16, y + 10 + bobY, 3, 3);
+                    g.FillRectangle(signalBrush, x + 11, y + 15 + bobY, 6, 2);
+                }
+                else
+                {
+                    int eyeHeight = pct >= 50 && frame == 2 ? 1 : 3;
+                    g.FillRectangle(signalBrush, x + 9, y + 11 + bobY, 3, eyeHeight);
+                    g.FillRectangle(signalBrush, x + 16, y + 11 + bobY, 3, eyeHeight);
+                    if (pct < 50) g.FillRectangle(signalBrush, x + 13, y + 16 + bobY, 2, 2);
+                }
+            }
+        }
+
+        public static void DrawFullSizeSprout(Graphics g, int x, int y, int pct, int frame)
+        {
+            int sway = pct >= 50 && frame % 2 == 1 ? 1 : 0;
+            Color body = pct < 0 ? Color.FromArgb(132, 137, 145) :
+                         pct >= 50 ? Color.FromArgb(168, 198, 91) :
+                         pct >= 20 ? Color.FromArgb(204, 174, 80) : Color.FromArgb(173, 101, 69);
+            Color leaf = pct < 0 ? Color.FromArgb(100, 106, 115) : Color.FromArgb(126, 181, 55);
+            Color eye = Color.FromArgb(27, 31, 34);
+            using (SolidBrush bodyBrush = new SolidBrush(body))
+            using (SolidBrush leafBrush = new SolidBrush(leaf))
+            using (SolidBrush eyeBrush = new SolidBrush(eye))
+            {
+                g.FillRectangle(leafBrush, x + 13, y + 4, 3, 8);
+                g.FillEllipse(leafBrush, x + 5 + sway, y, 10, 7);
+                g.FillEllipse(leafBrush, x + 15 - sway, y, 10, 7);
+                g.FillEllipse(bodyBrush, x + 2, y + 9, 24, 18);
+                g.FillRectangle(bodyBrush, x + 2, y + 17, 24, 9);
+                if (pct < 0)
+                {
+                    g.FillRectangle(eyeBrush, x + 8, y + 17, 3, 2);
+                    g.FillRectangle(eyeBrush, x + 17, y + 17, 3, 2);
+                    g.FillRectangle(eyeBrush, x + 13, y + 20, 2, 4);
+                }
+                else if (pct >= 50)
+                {
+                    int eyeHeight = frame == 2 ? 2 : 4;
+                    g.FillRectangle(eyeBrush, x + 8, y + 16, 3, eyeHeight);
+                    g.FillRectangle(eyeBrush, x + 17, y + 16, 3, eyeHeight);
+                    using (SolidBrush cheek = new SolidBrush(Color.FromArgb(230, 130, 145)))
+                    {
+                        g.FillRectangle(cheek, x + 5, y + 20, 3, 2);
+                        g.FillRectangle(cheek, x + 20, y + 20, 3, 2);
+                    }
+                }
+                else if (pct >= 20)
+                {
+                    g.FillRectangle(eyeBrush, x + 8, y + 17, 3, 3);
+                    g.FillRectangle(eyeBrush, x + 17, y + 17, 3, 3);
+                    using (SolidBrush sweat = new SolidBrush(Color.FromArgb(52, 152, 219)))
+                    {
+                        g.FillEllipse(sweat, x + 22, y + 11, 3, 5);
+                    }
+                }
+                else
+                {
+                    g.FillRectangle(eyeBrush, x + 7, y + 16, 5, 2);
+                    g.FillRectangle(eyeBrush, x + 16, y + 16, 5, 2);
+                    using (Pen crack = new Pen(Color.FromArgb(105, 54, 42), 1))
+                    {
+                        g.DrawLine(crack, x + 14, y + 20, x + 12, y + 23);
+                        g.DrawLine(crack, x + 12, y + 23, x + 15, y + 26);
+                    }
+                }
+            }
+        }
+
+        public static void DrawFullSizeMushroom(Graphics g, int x, int y, int pct, int frame)
+        {
+            int bobY = pct >= 50 && frame % 2 == 1 ? -1 : 0;
+            Color cap = pct < 0 ? Color.FromArgb(130, 135, 145) :
+                        pct >= 50 ? Color.FromArgb(155, 119, 211) :
+                        pct >= 20 ? Color.FromArgb(225, 157, 64) : Color.FromArgb(205, 74, 74);
+            Color stem = pct < 0 ? Color.FromArgb(155, 158, 166) : Color.FromArgb(244, 224, 193);
+            Color spot = pct < 0 ? Color.FromArgb(104, 109, 118) : Color.FromArgb(247, 238, 217);
+            Color eye = Color.FromArgb(31, 27, 35);
+            using (SolidBrush capBrush = new SolidBrush(cap))
+            using (SolidBrush stemBrush = new SolidBrush(stem))
+            using (SolidBrush spotBrush = new SolidBrush(spot))
+            using (SolidBrush eyeBrush = new SolidBrush(eye))
+            {
+                g.FillEllipse(capBrush, x + 1, y + 1 + bobY, 26, 17);
+                g.FillRectangle(capBrush, x + 1, y + 10 + bobY, 26, 6);
+                g.FillEllipse(spotBrush, x + 6, y + 5 + bobY, 5, 4);
+                g.FillEllipse(spotBrush, x + 18, y + 7 + bobY, 4, 4);
+                g.FillRectangle(stemBrush, x + 7, y + 14 + bobY, 14, 12);
+                g.FillEllipse(stemBrush, x + 5, y + 21 + bobY, 18, 6);
+                if (pct < 0)
+                {
+                    g.FillRectangle(eyeBrush, x + 10, y + 19, 3, 2);
+                    g.FillRectangle(eyeBrush, x + 16, y + 19, 3, 2);
+                    g.FillRectangle(eyeBrush, x + 14, y + 22, 2, 4);
+                }
+                else if (pct >= 50)
+                {
+                    int eyeHeight = frame == 2 ? 1 : 4;
+                    g.FillRectangle(eyeBrush, x + 10, y + 18 + bobY, 3, eyeHeight);
+                    g.FillRectangle(eyeBrush, x + 16, y + 18 + bobY, 3, eyeHeight);
+                }
+                else if (pct >= 20)
+                {
+                    g.FillRectangle(eyeBrush, x + 10, y + 19 + bobY, 3, 3);
+                    g.FillRectangle(eyeBrush, x + 16, y + 19 + bobY, 3, 3);
+                    using (SolidBrush sweat = new SolidBrush(Color.FromArgb(52, 152, 219)))
+                    {
+                        g.FillEllipse(sweat, x + 21, y + 15 + bobY, 3, 5);
+                    }
+                }
+                else
+                {
+                    g.FillRectangle(eyeBrush, x + 9, y + 19 + bobY, 5, 2);
+                    g.FillRectangle(eyeBrush, x + 15, y + 19 + bobY, 5, 2);
+                    using (Pen crack = new Pen(Color.FromArgb(90, 35, 45), 1))
+                    {
+                        g.DrawLine(crack, x + 14, y + 2 + bobY, x + 12, y + 7 + bobY);
+                        g.DrawLine(crack, x + 12, y + 7 + bobY, x + 15, y + 11 + bobY);
+                    }
                 }
             }
         }
@@ -1081,7 +1459,6 @@ namespace ClaudeCodexBattery
         private ToolTip headerToolTip;
         public bool PinOpen = false;
         public bool AlwaysOnTopEnabled { get; private set; }
-        private int catAnimFrame;
         private readonly string windowSettingsFile;
         private readonly string windowPositionFile;
         private MetricVisibilitySettings metricVisibility = new MetricVisibilitySettings();
@@ -1448,20 +1825,18 @@ namespace ClaudeCodexBattery
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            catAnimFrame = (catAnimFrame + 1) % 4;
             int activePct = TrayApplicationContext.Codex5h.PercentLeft >= 0 ? TrayApplicationContext.Codex5h.PercentLeft :
                             TrayApplicationContext.CodexWk.PercentLeft >= 0 ? TrayApplicationContext.CodexWk.PercentLeft :
                             TrayApplicationContext.Claude5h.PercentLeft >= 0 ? TrayApplicationContext.Claude5h.PercentLeft :
                             TrayApplicationContext.ClaudeWk.PercentLeft >= 0 ? TrayApplicationContext.ClaudeWk.PercentLeft :
                             TrayApplicationContext.FableWk.PercentLeft;
 
-            if (TrayApplicationContext.CurrentSkin == MascotSkin.Slime)
+            if (!CharacterRegistry.IsClassic(TrayApplicationContext.CurrentVisualId))
             {
-                TrayApplicationContext.DrawFullSizeSlime(g, 132, 2, activePct, catAnimFrame);
-            }
-            else if (TrayApplicationContext.CurrentSkin == MascotSkin.Cat)
-            {
-                TrayApplicationContext.DrawFullSizeCat(g, 132, 2, activePct, catAnimFrame);
+                CharacterDefinition character = CharacterRegistry.Find(TrayApplicationContext.CurrentVisualId);
+                TrayApplicationContext.DrawCharacter(character, g, 132, 2,
+                    UsageVisualStateResolver.Resolve(activePct), appContext.AnimationFrame,
+                    CharacterSurface.Flyout, appContext.ReduceMotion);
             }
 
             // Glassmorphic Outer Border Glow
@@ -1490,6 +1865,13 @@ namespace ClaudeCodexBattery
             AlwaysOnTopEnabled = enabled;
             this.TopMost = enabled;
             SaveWindowSettings();
+        }
+
+        public void SetReduceMotion(bool enabled)
+        {
+            appContext.LoadReduceMotion(enabled);
+            SaveWindowSettings();
+            this.Invalidate();
         }
 
         public bool IsMetricEnabled(string key)
@@ -1531,6 +1913,7 @@ namespace ClaudeCodexBattery
                         AlwaysOnTopEnabled = value;
                         this.TopMost = value;
                     }
+                    if (parts[0] == "reduceMotion") appContext.LoadReduceMotion(value);
                 }
             }
             catch { }
@@ -1544,6 +1927,7 @@ namespace ClaudeCodexBattery
                 List<string> lines = new List<string>();
                 lines.Add("pinOpen=" + PinOpen.ToString());
                 lines.Add("alwaysOnTop=" + AlwaysOnTopEnabled.ToString());
+                lines.Add("reduceMotion=" + appContext.ReduceMotion.ToString());
                 lines.AddRange(metricVisibility.ToLines());
                 File.WriteAllLines(windowSettingsFile, lines.ToArray());
             }
@@ -1625,6 +2009,426 @@ namespace ClaudeCodexBattery
                 headerToolTip = null;
             }
             base.Dispose(disposing);
+        }
+    }
+
+    internal sealed class CharacterCardButton : RadioButton
+    {
+        private readonly Font labelFont;
+        public CharacterDefinition Character { get; private set; }
+        public bool IsSelected { get { return Checked; } set { Checked = value; } }
+
+        public CharacterCardButton(CharacterDefinition character)
+        {
+            Character = character;
+            Text = string.Empty;
+            Size = new Size(200, 120);
+            Appearance = Appearance.Button;
+            AutoCheck = true;
+            FlatStyle = FlatStyle.Flat;
+            FlatAppearance.BorderSize = 0;
+            BackColor = Color.FromArgb(25, 29, 42);
+            ForeColor = Color.White;
+            labelFont = new Font("Segoe UI", 10f);
+            Font = labelFont;
+            Cursor = Cursors.Hand;
+            TabStop = true;
+            AccessibleName = character.DisplayName + " mascot";
+            AccessibleDescription = "Select " + character.DisplayName + " as the tray mascot";
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.Clear(BackColor);
+            Color border = IsSelected ? Color.FromArgb(35, 223, 211) : Color.FromArgb(53, 61, 79);
+            using (Pen pen = new Pen(border, IsSelected ? 2f : 1f))
+            using (GraphicsPath path = TrayApplicationContext.GetRoundedRect(new Rectangle(1, 1, Width - 3, Height - 3), 8))
+            {
+                e.Graphics.DrawPath(pen, path);
+            }
+            using (Bitmap preview = new Bitmap(32, 32))
+            using (Graphics previewGraphics = Graphics.FromImage(preview))
+            {
+                previewGraphics.SmoothingMode = SmoothingMode.AntiAlias;
+                previewGraphics.Clear(Color.Transparent);
+                TrayApplicationContext.DrawCharacter(Character, previewGraphics, 2, 2,
+                    UsageVisualState.Normal, 0, CharacterSurface.Preview, true);
+                InterpolationMode previousInterpolation = e.Graphics.InterpolationMode;
+                PixelOffsetMode previousPixelOffset = e.Graphics.PixelOffsetMode;
+                e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+                e.Graphics.DrawImage(preview, new Rectangle((Width - 68) / 2, 7, 68, 68), 0, 0, 32, 32, GraphicsUnit.Pixel);
+                e.Graphics.InterpolationMode = previousInterpolation;
+                e.Graphics.PixelOffsetMode = previousPixelOffset;
+            }
+            Rectangle textBounds = new Rectangle(6, 79, Width - 12, 28);
+            TextRenderer.DrawText(e.Graphics, Character.DisplayName, Font, textBounds,
+                IsSelected ? Color.FromArgb(35, 223, 211) : Color.FromArgb(214, 220, 237),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+            if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, new Rectangle(6, 6, Width - 12, Height - 12));
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing) labelFont.Dispose();
+        }
+    }
+
+    internal sealed class CharacterStatePreview : Control
+    {
+        private readonly Font percentageFont;
+        private readonly Font captionFont;
+        public CharacterDefinition Character { get; set; }
+        public UsageVisualState State { get; private set; }
+        public string Caption { get; private set; }
+        public string Percentage { get; private set; }
+
+        public CharacterStatePreview(UsageVisualState state, string percentage, string caption)
+        {
+            State = state;
+            Caption = caption;
+            Percentage = percentage;
+            Size = new Size(200, 76);
+            BackColor = Color.FromArgb(25, 29, 42);
+            TabStop = false;
+            captionFont = new Font("Segoe UI", 8.5f);
+            Font = captionFont;
+            percentageFont = new Font("Segoe UI", 10f, FontStyle.Bold);
+            AccessibleName = caption + " tray preview";
+            AccessibleDescription = percentage + " remaining, " + caption;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.Clear(BackColor);
+            using (Pen border = new Pen(Color.FromArgb(53, 61, 79), 1f))
+            using (GraphicsPath path = TrayApplicationContext.GetRoundedRect(new Rectangle(1, 1, Width - 3, Height - 3), 8))
+            {
+                e.Graphics.DrawPath(border, path);
+            }
+            if (Character != null)
+            {
+                TrayApplicationContext.DrawCharacter(Character, e.Graphics, 20, 21, State, 0,
+                    CharacterSurface.Preview, true);
+            }
+            Color dot = State == UsageVisualState.Normal ? Color.FromArgb(46, 204, 113) :
+                        State == UsageVisualState.Warning ? Color.FromArgb(241, 196, 15) : Color.FromArgb(231, 76, 60);
+            using (SolidBrush dotBrush = new SolidBrush(dot)) e.Graphics.FillEllipse(dotBrush, 80, 21, 10, 10);
+            TextRenderer.DrawText(e.Graphics, Percentage, percentageFont,
+                new Rectangle(98, 15, 90, 24), Color.White,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+            TextRenderer.DrawText(e.Graphics, Caption, Font,
+                new Rectangle(80, 41, 108, 22), Color.FromArgb(166, 176, 202),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing)
+            {
+                percentageFont.Dispose();
+                captionFont.Dispose();
+            }
+        }
+    }
+
+    public sealed class CharacterPickerForm : Form
+    {
+        private readonly TrayApplicationContext appContext;
+        private readonly List<CharacterCardButton> characterCards = new List<CharacterCardButton>();
+        private readonly List<CharacterStatePreview> statePreviews = new List<CharacterStatePreview>();
+        private readonly List<Font> ownedFonts = new List<Font>();
+        private readonly Label previewTitle;
+        private readonly Label selectedLabel;
+        private readonly RadioButton classicOption;
+        private readonly CheckBox reduceMotionCheck;
+        private string selectedCharacterId;
+        private bool ownedFontsDisposed;
+
+        internal IList<CharacterCardButton> CharacterCards { get { return characterCards.AsReadOnly(); } }
+        internal IList<CharacterStatePreview> StatePreviews { get { return statePreviews.AsReadOnly(); } }
+
+        public CharacterPickerForm(TrayApplicationContext context, string currentSelectionId, bool reduceMotion)
+        {
+            appContext = context;
+            selectedCharacterId = CharacterRegistry.IsClassic(currentSelectionId) ? CharacterRegistry.DefaultId :
+                CharacterRegistry.NormalizeSelectionId(currentSelectionId);
+
+            Text = "Choose mascot";
+            AccessibleName = "Choose Battery mascot";
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.CenterParent;
+            ClientSize = new Size(680, 550);
+            MinimumSize = new Size(680, 550);
+            MaximumSize = new Size(680, 550);
+            BackColor = Color.FromArgb(15, 18, 28);
+            ForeColor = Color.White;
+            AutoScaleMode = AutoScaleMode.Dpi;
+            KeyPreview = true;
+            DoubleBuffered = true;
+
+            Panel header = new Panel
+            {
+                Location = new Point(0, 0),
+                Size = new Size(680, 62),
+                BackColor = Color.FromArgb(17, 21, 32)
+            };
+            Label title = new Label
+            {
+                Text = "⚡  Choose mascot",
+                Font = OwnFont("Segoe UI Semibold", 16f, FontStyle.Bold),
+                ForeColor = Color.White,
+                Location = new Point(22, 16),
+                AutoSize = true
+            };
+            header.Controls.Add(title);
+            Button close = CreateHeaderButton("✕", "Close mascot picker", new Point(624, 11));
+            close.Click += new EventHandler((s, e) => { DialogResult = DialogResult.Cancel; Close(); });
+            header.Controls.Add(close);
+            Controls.Add(header);
+
+            Label prompt = new Label
+            {
+                Text = "Pick your companion",
+                Font = OwnFont("Segoe UI", 11f, FontStyle.Regular),
+                ForeColor = Color.FromArgb(185, 195, 219),
+                Location = new Point(24, 70),
+                AutoSize = true
+            };
+            Controls.Add(prompt);
+
+            IList<CharacterDefinition> definitions = CharacterRegistry.All;
+            for (int i = 0; i < definitions.Count; i++)
+            {
+                CharacterCardButton card = new CharacterCardButton(definitions[i]);
+                card.Location = new Point(24 + (i % 3) * 214, 96 + (i / 3) * 128);
+                card.TabIndex = i;
+                card.Click += new EventHandler(CharacterCard_Click);
+                characterCards.Add(card);
+                Controls.Add(card);
+            }
+
+            Panel divider = new Panel
+            {
+                Location = new Point(18, 350),
+                Size = new Size(644, 1),
+                BackColor = Color.FromArgb(53, 61, 79)
+            };
+            Controls.Add(divider);
+
+            previewTitle = new Label
+            {
+                Font = OwnFont("Segoe UI", 11f, FontStyle.Regular),
+                ForeColor = Color.FromArgb(200, 208, 227),
+                Location = new Point(24, 363),
+                AutoSize = true
+            };
+            Controls.Add(previewTitle);
+
+            reduceMotionCheck = new CheckBox
+            {
+                Text = "Reduce motion",
+                AccessibleName = "Reduce mascot motion",
+                Checked = reduceMotion,
+                AutoSize = true,
+                Font = OwnFont("Segoe UI", 9f, FontStyle.Regular),
+                ForeColor = Color.FromArgb(185, 195, 219),
+                Location = new Point(535, 364),
+                TabIndex = 6
+            };
+            Controls.Add(reduceMotionCheck);
+
+            statePreviews.Add(new CharacterStatePreview(UsageVisualState.Normal, "96%", "Healthy"));
+            statePreviews.Add(new CharacterStatePreview(UsageVisualState.Warning, "42%", "Warning"));
+            statePreviews.Add(new CharacterStatePreview(UsageVisualState.Critical, "12%", "Critical"));
+            for (int i = 0; i < statePreviews.Count; i++)
+            {
+                statePreviews[i].Location = new Point(24 + i * 214, 394);
+                Controls.Add(statePreviews[i]);
+            }
+
+            classicOption = new RadioButton
+            {
+                Text = "Classic dual battery",
+                AccessibleName = "Use Classic dual battery without a mascot",
+                AutoSize = true,
+                Font = OwnFont("Segoe UI", 9f, FontStyle.Regular),
+                ForeColor = Color.FromArgb(185, 195, 219),
+                Location = new Point(357, 364),
+                Checked = CharacterRegistry.IsClassic(currentSelectionId),
+                TabStop = true,
+                TabIndex = 7
+            };
+            classicOption.CheckedChanged += new EventHandler((s, e) => UpdateSelectionVisuals());
+            Controls.Add(classicOption);
+
+            Panel footerDivider = new Panel
+            {
+                Location = new Point(0, 478),
+                Size = new Size(680, 1),
+                BackColor = Color.FromArgb(53, 61, 79)
+            };
+            Controls.Add(footerDivider);
+
+            Button back = new Button
+            {
+                Text = "←  Back",
+                AccessibleName = "Back without applying changes",
+                DialogResult = DialogResult.Cancel,
+                FlatStyle = FlatStyle.Flat,
+                Font = OwnFont("Segoe UI Semibold", 10f, FontStyle.Regular),
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(28, 33, 49),
+                Location = new Point(24, 493),
+                Size = new Size(110, 42),
+                TabIndex = 8
+            };
+            back.FlatAppearance.BorderColor = Color.FromArgb(53, 61, 79);
+            Controls.Add(back);
+            CancelButton = back;
+
+            selectedLabel = new Label
+            {
+                Font = OwnFont("Segoe UI", 10f, FontStyle.Regular),
+                ForeColor = Color.FromArgb(174, 183, 207),
+                Location = new Point(190, 501),
+                Size = new Size(300, 26),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            Controls.Add(selectedLabel);
+
+            Button apply = new Button
+            {
+                Text = "Apply",
+                AccessibleName = "Apply mascot selection",
+                FlatStyle = FlatStyle.Flat,
+                Font = OwnFont("Segoe UI Semibold", 11f, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(17, 184, 177),
+                Location = new Point(546, 493),
+                Size = new Size(110, 42),
+                TabIndex = 9
+            };
+            apply.FlatAppearance.BorderColor = Color.FromArgb(35, 223, 211);
+            apply.Click += new EventHandler(Apply_Click);
+            Controls.Add(apply);
+            AcceptButton = apply;
+
+            UpdateSelectionVisuals();
+        }
+
+        private Font OwnFont(string family, float size, FontStyle style)
+        {
+            Font font = new Font(family, size, style);
+            ownedFonts.Add(font);
+            return font;
+        }
+
+        private Button CreateHeaderButton(string text, string accessibleName, Point location)
+        {
+            Button button = new Button
+            {
+                Text = text,
+                AccessibleName = accessibleName,
+                Font = OwnFont("Segoe UI Symbol", 13f, FontStyle.Regular),
+                ForeColor = Color.FromArgb(212, 221, 241),
+                BackColor = Color.FromArgb(28, 33, 49),
+                FlatStyle = FlatStyle.Flat,
+                Location = location,
+                Size = new Size(40, 40),
+                Cursor = Cursors.Hand
+            };
+            button.FlatAppearance.BorderColor = Color.FromArgb(53, 61, 79);
+            return button;
+        }
+
+        private void CharacterCard_Click(object sender, EventArgs e)
+        {
+            CharacterCardButton card = sender as CharacterCardButton;
+            if (card == null) return;
+            selectedCharacterId = card.Character.Id;
+            classicOption.Checked = false;
+            UpdateSelectionVisuals();
+        }
+
+        internal bool HandleCharacterSelectionKey(CharacterCardButton card, Keys keyData)
+        {
+            if (card == null || keyData != Keys.Enter) return false;
+            CharacterCard_Click(card, EventArgs.Empty);
+            return true;
+        }
+
+        private void UpdateSelectionVisuals()
+        {
+            bool classic = classicOption != null && classicOption.Checked;
+            CharacterDefinition selected = CharacterRegistry.Find(selectedCharacterId);
+            for (int i = 0; i < characterCards.Count; i++)
+            {
+                characterCards[i].IsSelected = !classic && characterCards[i].Character.Id == selected.Id;
+                characterCards[i].Invalidate();
+            }
+            for (int i = 0; i < statePreviews.Count; i++)
+            {
+                statePreviews[i].Character = selected;
+                statePreviews[i].Visible = !classic;
+                statePreviews[i].Invalidate();
+            }
+            previewTitle.Text = classic ? "Classic dual battery uses a static gauge" :
+                "Tray preview (" + selected.DisplayName + ")";
+            selectedLabel.Text = classic ? "Selected: Classic dual battery" : "Selected: " + selected.DisplayName;
+        }
+
+        private void Apply_Click(object sender, EventArgs e)
+        {
+            string selection = classicOption.Checked ? CharacterRegistry.ClassicId : selectedCharacterId;
+            appContext.ApplyVisualSelection(selection, reduceMotionCheck.Checked);
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.Escape)
+            {
+                DialogResult = DialogResult.Cancel;
+                Close();
+                return true;
+            }
+            int index = -1;
+            for (int i = 0; i < characterCards.Count; i++) if (characterCards[i].Focused) index = i;
+            if (index >= 0)
+            {
+                if (HandleCharacterSelectionKey(characterCards[index], keyData)) return true;
+                int next = index;
+                if (keyData == Keys.Left && index % 3 > 0) next--;
+                if (keyData == Keys.Right && index % 3 < 2) next++;
+                if (keyData == Keys.Up && index >= 3) next -= 3;
+                if (keyData == Keys.Down && index < 3) next += 3;
+                if (next != index)
+                {
+                    characterCards[next].Focus();
+                    return true;
+                }
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing && !ownedFontsDisposed)
+            {
+                for (int i = 0; i < ownedFonts.Count; i++) ownedFonts[i].Dispose();
+                ownedFontsDisposed = true;
+            }
         }
     }
 }
