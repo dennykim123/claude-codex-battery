@@ -151,6 +151,22 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
       state: size == "small" ? .on : .off)
   row(settings, tr("Battery size")).submenu = sizeMenu
 
+  let showMenu = NSMenu()
+  let curShow = currentShowMode()
+  for (mode, key) in [(ShowMode.group, "Tightest per group"), (.one, "Tightest only"), (.all, "All")] {
+    row(showMenu, tr(key), action: #selector(AppDelegate.setShowMode(_:)), target: target,
+        repr: mode.rawValue, state: curShow == mode ? .on : .off)
+  }
+  row(settings, tr("Batteries shown")).submenu = showMenu
+
+  let numMenu = NSMenu()
+  let curNum = currentNumStyle()
+  for (style, key) in [(NumStyle.inside, "Inside"), (.outside, "Outside"), (.off, "Hidden")] {
+    row(numMenu, tr(key), action: #selector(AppDelegate.setNumStyle(_:)), target: target,
+        repr: style.rawValue, state: curNum == style ? .on : .off)
+  }
+  row(settings, tr("Number")).submenu = numMenu
+
   let catMenu = NSMenu()
   let curCat = currentCatStyle()
   for (style, key) in [(CatStyle.none, "Off"), (.nyan, "Wide face"),
