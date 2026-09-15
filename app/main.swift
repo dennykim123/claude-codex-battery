@@ -228,10 +228,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     if let s = lastSnap { render(s) } else { refresh() }
   }
 
-  // Divides by the display scale factor based on pixel size (Retina ÷2, 1x monitor ÷1) — safe to reapply
+  // Divides by the canvas render scale, not the display's. The bitmap is always 2x, so dividing by a
+  // 1x display's backing factor left the widget at double size (and visibly aliased) there.
   func setButtonImage(_ img: NSImage) {
     guard let btn = statusItem.button else { return }
-    let scale = btn.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    let scale = RENDER_SCALE
     let rep = img.representations.first
     let pw = CGFloat(rep?.pixelsWide ?? Int(img.size.width))
     let ph = CGFloat(rep?.pixelsHigh ?? Int(img.size.height))
