@@ -59,6 +59,10 @@ func currentBattSize() -> String {
 
 private typealias RGB = (r: UInt8, g: UInt8, b: UInt8)
 
+// The canvas is always drawn at 2x for Retina. Callers sizing an NSImage from it must divide by
+// THIS, not by the display's backing scale — see setButtonImage.
+let RENDER_SCALE: CGFloat = 2
+
 // Logical pixel canvas (SCALE=2 — draws at 2x pixels for Retina)
 private final class Canvas {
   static let SCALE = 2
