@@ -52,7 +52,7 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
   if ProcessInfo.processInfo.environment["CCB_GOLD_TEST"] != nil {
     return items.map { BattItem(label: $0.label, remain: $0.remain == nil ? nil : 100) }
   }
-  return items
+  return filterForShowMode(items)
 }
 
 // Cat state from the snapshot: burn rate → speed, projected depletion → panic
@@ -228,10 +228,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     if let s = lastSnap { render(s) } else { refresh() }
   }
 
-  // Divides by the display scale factor based on pixel size (Retina ÷2, 1x monitor ÷1) — safe to reapply
+  // Divides by the canvas render scale, NOT the display's. The bitmap is always 2x, so dividing by a
+  // 1x display's backing factor left the widget at double size (and visibly aliased) on non-Retina monitors.
   func setButtonImage(_ img: NSImage) {
     guard let btn = statusItem.button else { return }
-    let scale = btn.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    let scale = RENDER_SCALE
     let rep = img.representations.first
     let pw = CGFloat(rep?.pixelsWide ?? Int(img.size.width))
     let ph = CGFloat(rep?.pixelsHigh ?? Int(img.size.height))
@@ -348,6 +349,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try? FileManager.default.createDirectory(atPath: STATE_DIR, withIntermediateDirectories: true)
     try? s.write(toFile: SIZE_FILE, atomically: true, encoding: .utf8)
     rerender() // re-render only — the data is unchanged so this reflects instantly
+  }
+
+  // Number placement (Settings → Number) — written next to the size setting so both survive updates
+  @objc func setShowMode(_ sender: NSMenuItem) {
+    guard let raw = sender.representedObject as? String else { return }
+    try? FileManager.default.createDirectory(atPath: STATE_DIR, withIntermediateDirectories: true)
+    try? raw.write(toFile: SHOW_FILE, atomically: true, encoding: .utf8)
+    rerender()
+  }
+
+  @objc func setNumStyle(_ sender: NSMenuItem) {
+    guard let raw = sender.representedObject as? String else { return }
+    try? FileManager.default.createDirectory(atPath: STATE_DIR, withIntermediateDirectories: true)
+    try? raw.write(toFile: NUM_FILE, atomically: true, encoding: .utf8)
+    rerender()
   }
 
   @objc func toggleLoginItem() {
