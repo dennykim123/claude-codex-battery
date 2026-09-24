@@ -77,11 +77,17 @@ const TR3 = {
     "zh-Hant": "剩餘 %",
     es: "% restante",
   },
-  "C5·CW·CF = Claude 5h·weekly·Fable": {
-    ja: "C5·CW·CF = Claude 5時間·週間·Fable",
-    "zh-Hans": "C5·CW·CF = Claude 5小时·每周·Fable",
-    "zh-Hant": "C5·CW·CF = Claude 5小時·每週·Fable",
-    es: "C5·CW·CF = Claude 5h·semanal·Fable",
+  "{0} = Claude 5h·weekly·{1}": {
+    ja: "{0} = Claude 5時間·週間·{1}",
+    "zh-Hans": "{0} = Claude 5小时·每周·{1}",
+    "zh-Hant": "{0} = Claude 5小時·每週·{1}",
+    es: "{0} = Claude 5h·semanal·{1}",
+  },
+  "C5·CW = Claude 5h·weekly": {
+    ja: "C5·CW = Claude 5時間·週間",
+    "zh-Hans": "C5·CW = Claude 5小时·每周",
+    "zh-Hant": "C5·CW = Claude 5小時·每週",
+    es: "C5·CW = Claude 5h·semanal",
   },
   "X5·XW = Codex 5h·weekly": {
     ja: "X5·XW = Codex 5時間·週間",
@@ -649,15 +655,30 @@ function getClaude() {
   }
 }
 
-// ── 1b. Claude usage by model today (Opus/Sonnet/Fable/Haiku) ──
-const MODEL_NAMES = {
-  "claude-fable-5": "Fable 5",
-  "claude-opus-4-8": "Opus 4.8",
-  "claude-opus-4-7": "Opus 4.7",
-  "claude-sonnet-5": "Sonnet 5",
-  "claude-haiku-4-5-20251001": "Haiku 4.5",
-};
-const shortModel = (n) => MODEL_NAMES[n] || (n || "").replace("claude-", "");
+// ── 1b. Claude usage by model today ──
+// Display names are derived from the id, never enumerated: "claude-opus-4-8"
+// → "Opus 4.8", "claude-haiku-4-5-20251001" → "Haiku 4.5". A new model needs
+// no code change; the override map is only for names the deriver gets wrong.
+const MODEL_NAME_OVERRIDES = {};
+function prettyModel(raw) {
+  const id = String(raw ?? "");
+  const stem = id.replace(/^claude-/, "").replace(/-\d{8}$/, "");
+  if (!stem) return id;
+  // Order-preserving: consecutive numeric parts merge into one version token,
+  // so "opus-4-8" → "Opus 4.8" and "gpt-5-6-solaris" → "Gpt 5.6 Solaris".
+  const isVer = (t) => /^\d+(?:\.\d+)*$/.test(t);
+  const tokens = [];
+  for (const part of stem.split(/[-_]/)) {
+    if (!part) continue;
+    const last = tokens.length ? tokens[tokens.length - 1] : null;
+    if (isVer(part) && last && isVer(last))
+      tokens[tokens.length - 1] = `${last}.${part}`;
+    else
+      tokens.push(isVer(part) ? part : part.charAt(0).toUpperCase() + part.slice(1));
+  }
+  return tokens.join(" ") || id;
+}
+const shortModel = (n) => MODEL_NAME_OVERRIDES[n] ?? prettyModel(n);
 function getClaudeModels() {
   try {
     const d = new Date();
@@ -776,7 +797,30 @@ function readClaudeUsageFallback() {
   return null;
 }
 
-// 5-hour session / weekly overall / Fable weekly (weekly_scoped) utilization
+// "Fable" → "CF", "Opus 4.8" → "CO". On a collision the rest of the name is
+// walked, then a digit, so two model caps can never share a label.
+function claudeCapLabel(displayName, used) {
+  const chars = String(displayName ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  for (const ch of chars) {
+    const cand = `C${ch}`;
+    if (!used.has(cand)) {
+      used.add(cand);
+      return cand;
+    }
+  }
+  for (let i = 1; i < 10; i++) {
+    const cand = `C${i}`;
+    if (!used.has(cand)) {
+      used.add(cand);
+      return cand;
+    }
+  }
+  return "C?";
+}
+
+// 5-hour session / weekly overall / per-model weekly (weekly_scoped) utilization
 function getClaudeUsage() {
   const src = fetchClaudeUsageLive() ?? readClaudeUsageFallback();
   if (!src) return null;
@@ -785,25 +829,27 @@ function getClaudeUsage() {
     const toTs = (iso) => (iso ? Math.floor(Date.parse(iso) / 1000) : null);
     const win = (o) =>
       o ? { pct: o.utilization ?? 0, resetsAt: toTs(o.resets_at) } : null;
-    // Weekly scoped cap for Fable (or whichever top model)
-    let fable = null;
+    // Every weekly cap scoped to a model — one today (the top model), but the
+    // API may report several. Names and labels come from the response, so a
+    // model rename or addition needs no change here.
+    const usedLabels = new Set(["C5", "CW"]);
+    const modelCaps = [];
     for (const l of d.limits || []) {
       const mdl = l.scope?.model?.display_name;
-      if (l.group === "weekly" && mdl) {
-        fable = {
-          pct: l.percent ?? 0,
-          resetsAt: toTs(l.resets_at),
-          model: mdl,
-        };
-        break;
-      }
+      if (l.group !== "weekly" || !mdl) continue;
+      modelCaps.push({
+        pct: l.percent ?? 0,
+        resetsAt: toTs(l.resets_at),
+        model: mdl,
+        label: claudeCapLabel(mdl, usedLabels),
+      });
     }
     return {
       measuredAt,
       live,
       fiveHour: win(d.five_hour),
       weekly: win(d.seven_day),
-      fable,
+      modelCaps,
     };
   } catch {
     return null;
@@ -974,7 +1020,7 @@ const codex = getCodex();
 const out = [];
 
 // Menu bar: battery icons (all values are "remaining %")
-//   Claude: C5=5h session · CW=weekly · CF=Fable weekly
+//   Claude: C5=5h session · CW=weekly · C<initial>=per-model weekly cap
 //   Codex:  X5=5h · XW=weekly
 const rem = (pct) => (pct == null ? null : Math.max(0, 100 - pct));
 
@@ -1017,7 +1063,8 @@ if (CLI_MODE) {
   if (cusage) {
     if (cusage.fiveHour) rows.push({ label: "C5", remain: rem(cusage.fiveHour.pct), reset: resetTxt(cusage.fiveHour.resetsAt) });
     if (cusage.weekly) rows.push({ label: "CW", remain: rem(cusage.weekly.pct), reset: resetTxt(cusage.weekly.resetsAt) });
-    if (cusage.fable) rows.push({ label: "CF", remain: rem(cusage.fable.pct), reset: resetTxt(cusage.fable.resetsAt) });
+    for (const cap of cusage.modelCaps ?? [])
+      rows.push({ label: cap.label, remain: rem(cap.pct), reset: resetTxt(cap.resetsAt) });
   } else if (claude && !claude.error) {
     rows.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct), reset: `${L("리셋", "resets")} ${fmtDur(claude.remainMin * 60)}` });
   }
@@ -1095,8 +1142,8 @@ const battItems = [];
 if (cusage) {
   battItems.push({ label: "C5", remain: rem(cusage.fiveHour?.pct) });
   battItems.push({ label: "CW", remain: rem(cusage.weekly?.pct) });
-  if (cusage.fable)
-    battItems.push({ label: "CF", remain: rem(cusage.fable.pct) });
+  for (const cap of cusage.modelCaps ?? [])
+    battItems.push({ label: cap.label, remain: rem(cap.pct) });
 } else if (claude && !claude.error) {
   battItems.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct) });
 }
@@ -1131,13 +1178,19 @@ const codexLegend =
     ? L("X = Codex 크레딧", "X = Codex credits")
     : L("X5·XW = Codex 5시간·주간", "X5·XW = Codex 5h·weekly");
 const legendParts = [];
-if (hasClaude)
+if (hasClaude) {
+  const caps = cusage?.modelCaps ?? [];
   legendParts.push(
-    L(
-      "C5·CW·CF = Claude 5시간·주간·Fable",
-      "C5·CW·CF = Claude 5h·weekly·Fable",
-    ),
+    caps.length
+      ? tf(
+          "{0} = Claude 5시간·주간·{1}",
+          "{0} = Claude 5h·weekly·{1}",
+          ["C5", "CW", ...caps.map((c) => c.label)].join("·"),
+          caps.map((c) => c.model).join("·"),
+        )
+      : L("C5·CW = Claude 5시간·주간", "C5·CW = Claude 5h·weekly"),
   );
+}
 if (hasCodex) legendParts.push(codexLegend);
 if (legendParts.length) {
   out.push(
@@ -1164,8 +1217,8 @@ if (hasClaude) {
     };
     winRow(L("5시간 남음", "5h left  "), cusage.fiveHour);
     winRow(L("주간 남음 ", "wk left  "), cusage.weekly);
-    if (cusage.fable)
-      winRow(`${cusage.fable.model} ${L("남음", "left")}`, cusage.fable);
+    for (const cap of cusage.modelCaps ?? [])
+      winRow(`${cap.model} ${L("남음", "left")}`, cap);
     out.push(
       cusage.live
         ? `${L("라이브 (Anthropic usage API — 전 디바이스 합산)", "live (Anthropic usage API — all devices combined)")} | size=11 color=#8b949e`

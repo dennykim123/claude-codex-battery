@@ -31,7 +31,7 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
   if let u = snap.usage {
     items.append(BattItem(label: "C5", remain: u.fiveHour.map { max(0, 100 - $0.pct) }))
     items.append(BattItem(label: "CW", remain: u.weekly.map { max(0, 100 - $0.pct) }))
-    if let f = u.fable { items.append(BattItem(label: "CF", remain: max(0, 100 - f.pct))) }
+    for cap in u.modelCaps { items.append(BattItem(label: cap.label, remain: max(0, 100 - cap.pct))) }
   } else if let b = snap.block {
     items.append(BattItem(label: "C5", remain: max(0, 100 - b.elapsedPct)))
   }
@@ -446,7 +446,7 @@ if CommandLine.arguments.contains("--dump") {
     print("claude.live:", u.live)
     if let w = u.fiveHour { print("claude.5h: used \(w.pct)% resetsAt \(w.resetsAt ?? -1)") }
     if let w = u.weekly { print("claude.weekly: used \(w.pct)% resetsAt \(w.resetsAt ?? -1)") }
-    if let f = u.fable { print("claude.fable(\(f.model)): used \(f.pct)%") }
+    for cap in u.modelCaps { print("claude.modelCap[\(cap.label)] \(cap.model): used \(cap.pct)%") }
   } else { print("claude: nil") }
   if let b = snap.block {
     print(String(format: "ccusage.block: cost $%.2f tokens %@ elapsed %.0f%%", b.cost, fmtTok(b.tokens), b.elapsedPct))

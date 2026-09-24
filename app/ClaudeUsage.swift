@@ -8,10 +8,13 @@ struct UsageWindow {
   let resetsAt: Int? // epoch seconds
 }
 
-struct FableWindow {
+// A weekly cap scoped to one model. The name and the capsule label both come
+// from the API response, so a model change needs no code change here.
+struct ModelCapWindow {
   let pct: Double
   let resetsAt: Int?
   let model: String
+  let label: String
 }
 
 struct ClaudeUsage {
@@ -19,7 +22,7 @@ struct ClaudeUsage {
   let live: Bool
   let fiveHour: UsageWindow?
   let weekly: UsageWindow?
-  let fable: FableWindow?
+  let modelCaps: [ModelCapWindow]
 }
 
 private let USAGE_CACHE = "\(STATE_DIR)/.claude-usage.json"
@@ -99,7 +102,21 @@ private func readFallback() -> (data: [String: Any], measuredAt: Int, live: Bool
   return nil
 }
 
-// 5-hour session / overall weekly / Fable weekly-scoped usage rates
+// "Fable" → "CF", "Opus 4.8" → "CO". On a collision the rest of the name is
+// walked, then a digit, so two model caps never share a label.
+func claudeCapLabel(_ displayName: String, used: inout Set<String>) -> String {
+  for ch in displayName.uppercased() where ch.isLetter || ch.isNumber {
+    let cand = "C\(ch)"
+    if !used.contains(cand) { used.insert(cand); return cand }
+  }
+  for i in 1...9 {
+    let cand = "C\(i)"
+    if !used.contains(cand) { used.insert(cand); return cand }
+  }
+  return "C?"
+}
+
+// 5-hour session / overall weekly / per-model weekly-scoped usage rates
 func getClaudeUsage(now: Int) -> ClaudeUsage? {
   guard let src = fetchLive(now: now) ?? readFallback() else { return nil }
   let d = src.data
@@ -107,16 +124,20 @@ func getClaudeUsage(now: Int) -> ClaudeUsage? {
     guard let w = jd(o) else { return nil }
     return UsageWindow(pct: jn(w["utilization"]) ?? 0, resetsAt: parseISO(jstr(w["resets_at"])))
   }
-  // Fable's (or the top-tier model's) weekly-scoped limit
-  var fable: FableWindow? = nil
+  // Every weekly cap scoped to a model — one today (the top model), but the
+  // API may report several, and dropping the extras would hide a real limit.
+  var usedLabels: Set<String> = ["C5", "CW"]
+  var modelCaps: [ModelCapWindow] = []
   for l0 in ja(d["limits"]) ?? [] {
     guard let l = jd(l0) else { continue }
     if jstr(l["group"]) == "weekly",
        let mdl = jstr(jd(jd(l["scope"])?["model"])?["display_name"]) {
-      fable = FableWindow(pct: jn(l["percent"]) ?? 0, resetsAt: parseISO(jstr(l["resets_at"])), model: mdl)
-      break
+      modelCaps.append(ModelCapWindow(pct: jn(l["percent"]) ?? 0,
+                                      resetsAt: parseISO(jstr(l["resets_at"])),
+                                      model: mdl,
+                                      label: claudeCapLabel(mdl, used: &usedLabels)))
     }
   }
   return ClaudeUsage(measuredAt: src.measuredAt, live: src.live,
-                     fiveHour: win(d["five_hour"]), weekly: win(d["seven_day"]), fable: fable)
+                     fiveHour: win(d["five_hour"]), weekly: win(d["seven_day"]), modelCaps: modelCaps)
 }

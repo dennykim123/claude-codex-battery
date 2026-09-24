@@ -61,15 +61,33 @@ public static class ParserTests
             "{\"five_hour\":{\"utilization\":10},\"limits\":[" +
             "{\"kind\":\"weekly_scoped\",\"percent\":91,\"resets_at\":\"2099-01-02T00:00:00Z\"," +
             "\"scope\":{\"model\":{\"display_name\":\"Fable\"}}}]}",
-            ConnectionState.Connected, "test"), "Claude parses a Fable scoped weekly limit");
-        AssertEqual(9, TrayApplicationContext.FableWk.PercentLeft, "Fable weekly remaining");
+            ConnectionState.Connected, "test"), "Claude parses a model-scoped weekly limit");
+        AssertEqual(9, TrayApplicationContext.ModelWk.PercentLeft, "Model cap weekly remaining");
+        AssertEqual("Fable Week", TrayApplicationContext.ModelWk.Name, "Model cap is named by the API");
+        AssertEqual("CF", TrayApplicationContext.ModelWk.WindowLabel, "Model cap label follows the model name");
+
+        // A new top model must not make the row disappear: the parser used to
+        // match the literal name "Fable" and dropped everything else.
+        ResetUsage();
+        AssertTrue(parser.ParseClaudeJson(
+            "{\"five_hour\":{\"utilization\":10},\"limits\":[" +
+            "{\"kind\":\"weekly_scoped\",\"percent\":50,\"resets_at\":\"2099-01-02T00:00:00Z\"," +
+            "\"scope\":{\"model\":{\"display_name\":\"Opus 5\"}}}]}",
+            ConnectionState.Connected, "test"), "Claude parses a renamed top model");
+        AssertEqual(50, TrayApplicationContext.ModelWk.PercentLeft, "Renamed model still reports remaining");
+        AssertEqual("Opus 5 Week", TrayApplicationContext.ModelWk.Name, "Renamed model relabels the row");
+        AssertEqual("CO", TrayApplicationContext.ModelWk.WindowLabel, "Renamed model relabels the capsule");
 
         ResetUsage();
         AssertTrue(parser.ParseClaudeJson(
             "{\"five_hour\":{\"utilization\":10},\"limits\":[" +
-            "{\"kind\":\"weekly_scoped\",\"percent\":50,\"scope\":{\"model\":{\"display_name\":\"Other\"}}}]}",
-            ConnectionState.Connected, "test"), "Claude ignores unrelated scoped model limits");
-        AssertEqual(-1, TrayApplicationContext.FableWk.PercentLeft, "Fable remains hidden when its limit is absent");
+            "{\"kind\":\"weekly\",\"percent\":50}]}",
+            ConnectionState.Connected, "test"), "Claude tolerates limits with no model scope");
+        AssertEqual(-1, TrayApplicationContext.ModelWk.PercentLeft, "Model row stays hidden without a scoped limit");
+
+        AssertEqual("CF", TrayApplicationContext.ModelCapLabel("Fable"), "Label derives from the first letter");
+        AssertEqual("CO", TrayApplicationContext.ModelCapLabel("Opus 4.8"), "Label ignores version digits");
+        AssertEqual("CM", TrayApplicationContext.ModelCapLabel(""), "Empty model name falls back");
 
         ResetUsage();
         AssertTrue(parser.ParseCodexLiveJson(
@@ -123,13 +141,13 @@ public static class ParserTests
             "futureSetting=False"
         });
         AssertFalse(visibility.Get("claude5h"), "Visibility parses hidden Claude 5h");
-        AssertFalse(visibility.Get("fableWeek"), "Visibility parses hidden Fable Week");
+        AssertFalse(visibility.Get("fableWeek"), "Visibility parses hidden model week");
         AssertTrue(visibility.Get("codexWeek"), "Invalid visibility value preserves the default");
 
         visibility.Set("codex5h", false);
         MetricVisibilitySettings visibilityRoundTrip = MetricVisibilitySettings.Parse(visibility.ToLines());
         AssertFalse(visibilityRoundTrip.Get("claude5h"), "Visibility round trip preserves Claude 5h");
-        AssertFalse(visibilityRoundTrip.Get("fableWeek"), "Visibility round trip preserves Fable Week");
+        AssertFalse(visibilityRoundTrip.Get("fableWeek"), "Visibility round trip preserves model week");
         AssertFalse(visibilityRoundTrip.Get("codex5h"), "Visibility round trip preserves Codex 5h");
         AssertTrue(visibilityRoundTrip.Get("claudeWeek"), "Visibility round trip preserves shown rows");
 
@@ -141,7 +159,7 @@ public static class ParserTests
     {
         TrayApplicationContext.Claude5h = new BatteryData { Name = "Claude 5h", WindowLabel = "C5" };
         TrayApplicationContext.ClaudeWk = new BatteryData { Name = "Claude Week", WindowLabel = "CW" };
-        TrayApplicationContext.FableWk = new BatteryData { Name = "Fable Week", WindowLabel = "FW" };
+        TrayApplicationContext.ModelWk = new BatteryData { Name = "Model Week", WindowLabel = "CM" };
         TrayApplicationContext.Codex5h = new BatteryData { Name = "Codex 5h", WindowLabel = "X5" };
         TrayApplicationContext.CodexWk = new BatteryData { Name = "Codex Week", WindowLabel = "XW" };
     }

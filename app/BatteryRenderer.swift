@@ -3,7 +3,7 @@
 import Cocoa
 
 struct BattItem {
-  let label: String // "C5"·"CW"·"CF"·"X5"·"XW"·"X" — the first letter is the group (C/X)
+  let label: String // "C5"·"CW"·"C<initial>"·"X5"·"XW"·"X" — the first letter is the group (C/X)
   let remain: Double? // remaining % (nil means an empty capsule)
 }
 

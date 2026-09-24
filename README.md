@@ -26,7 +26,7 @@ Ships two ways: a **notarized native app** (double-click install, zero prerequis
 
 | Group | Batteries | Source |
 |-------|-----------|--------|
-| **`C` Claude** | 5-hour session · weekly · **Fable** (top-model weekly cap) | Anthropic's OAuth usage API — queried live with your local Claude Code login; **account-level**, so usage from every device/surface is included |
+| **`C` Claude** | 5-hour session · weekly · **top-model weekly cap** (named by the API — `Fable` today; the label and legend follow whatever model Anthropic reports) | Anthropic's OAuth usage API — queried live with your local Claude Code login; **account-level**, so usage from every device/surface is included |
 | **`X` Codex** | 5-hour · weekly (or credit balance on the premium plan) | Codex's account-level usage API (`backend-api/wham/usage`), queried live with your local Codex login — same data Codex CLI's `/status` shows; falls back to `~/.codex/sessions/**/*.jsonl` if offline |
 
 Click the widget for a dropdown with, per limit:
@@ -186,7 +186,7 @@ To turn the check off entirely, comment out the `getUpdateInfo()` call near the 
 The whole thing is one `.js` file run by bun on a timer.
 
 - **Battery icons** are drawn pixel-by-pixel into an RGBA buffer and encoded to PNG using only `node:zlib` (hand-rolled CRC32 + IHDR/IDAT/IEND chunks). A 5×7 bitmap font renders the numbers and the `C`/`X` group labels. SwiftBar displays the PNG at pixels ÷ 2 pt.
-- **Claude limits** are fetched from Anthropic's OAuth usage endpoint using the Claude Code login token in your Keychain, with the last good response cached at `~/.claude/swiftbar/.claude-usage.json` as an offline fallback. The Fable cap is the `weekly_scoped` entry.
+- **Claude limits** are fetched from Anthropic's OAuth usage endpoint using the Claude Code login token in your Keychain, with the last good response cached at `~/.claude/swiftbar/.claude-usage.json` as an offline fallback. The top-model cap is the `weekly_scoped` entry — no model name is hard-coded anywhere, so a new or renamed model just changes the label (`CF` → `CO` for an Opus cap), and several model caps render as several capsules.
 - **Codex limits** are fetched live from `backend-api/wham/usage` with the token in `~/.codex/auth.json`, normalized to the same shape as the session-log format, and cached at `~/.claude/swiftbar/.codex-usage.json` as an offline fallback (with the newest session log as a second fallback). The premium plan reports a `credits` object instead of percentages when exhausted; the widget handles both shapes.
 
 Both queries are read-only and cost **no tokens** — you never have to *use* Claude or Codex to get a fresh reading, and every device sees the same account-level numbers. Older builds refreshed Codex by quietly running a real `codex` command in the background (spending tokens) when the session-log value went stale; that's gone — the live endpoint makes it unnecessary.

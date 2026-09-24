@@ -76,7 +76,7 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
         }
       }
       if let w = u.weekly { gaugeRow(menu, labels.week, pct: w.pct, resetText: resetText(w.resetsAt, now: now)) }
-      if let f = u.fable { gaugeRow(menu, f.model, pct: f.pct, resetText: resetText(f.resetsAt, now: now)) }
+      for cap in u.modelCaps { gaugeRow(menu, cap.model, pct: cap.pct, resetText: resetText(cap.resetsAt, now: now)) }
       if !u.live {
         row(menu, "⚠ " + trf("cached %@ ago — check login/network", fmtDur(now - u.measuredAt)),
             size: 11, color: WARN)

@@ -52,7 +52,7 @@ namespace ClaudeCodexBattery
     {
         public bool Claude5h = true;
         public bool ClaudeWeek = true;
-        public bool FableWeek = true;
+        public bool ModelWeek = true; // persisted under the old "fableWeek" key so existing settings files keep working
         public bool Codex5h = true;
         public bool CodexWeek = true;
 
@@ -62,7 +62,7 @@ namespace ClaudeCodexBattery
             {
                 case "claude5h": return Claude5h;
                 case "claudeWeek": return ClaudeWeek;
-                case "fableWeek": return FableWeek;
+                case "fableWeek": return ModelWeek;
                 case "codex5h": return Codex5h;
                 case "codexWeek": return CodexWeek;
                 default: return true;
@@ -75,7 +75,7 @@ namespace ClaudeCodexBattery
             {
                 case "claude5h": Claude5h = value; break;
                 case "claudeWeek": ClaudeWeek = value; break;
-                case "fableWeek": FableWeek = value; break;
+                case "fableWeek": ModelWeek = value; break;
                 case "codex5h": Codex5h = value; break;
                 case "codexWeek": CodexWeek = value; break;
             }
@@ -103,7 +103,7 @@ namespace ClaudeCodexBattery
             {
                 "claude5h=" + Claude5h.ToString(),
                 "claudeWeek=" + ClaudeWeek.ToString(),
-                "fableWeek=" + FableWeek.ToString(),
+                "fableWeek=" + ModelWeek.ToString(),
                 "codex5h=" + Codex5h.ToString(),
                 "codexWeek=" + CodexWeek.ToString()
             };
@@ -175,7 +175,8 @@ namespace ClaudeCodexBattery
 
         public static BatteryData Claude5h = new BatteryData { Name = "Claude 5h", WindowLabel = "C5" };
         public static BatteryData ClaudeWk = new BatteryData { Name = "Claude Week", WindowLabel = "CW" };
-        public static BatteryData FableWk = new BatteryData { Name = "Fable Week", WindowLabel = "FW" };
+        // Named by the API on the first successful parse; this is only the placeholder.
+        public static BatteryData ModelWk = new BatteryData { Name = "Model Week", WindowLabel = "CM" };
         public static BatteryData Codex5h = new BatteryData { Name = "Codex 5h", WindowLabel = "X5" };
         public static BatteryData CodexWk = new BatteryData { Name = "Codex Week", WindowLabel = "XW" };
         public static MascotSkin CurrentSkin = MascotSkin.Slime;
@@ -263,7 +264,7 @@ namespace ClaudeCodexBattery
             ToolStripMenuItem visibleRowsSubMenu = new ToolStripMenuItem("Visible usage rows");
             visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Claude 5h", "claude5h"));
             visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Claude Week", "claudeWeek"));
-            visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Fable Week", "fableWeek"));
+            visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem(ModelWk.Name, "fableWeek"));
             visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Codex 5h", "codex5h"));
             visibleRowsSubMenu.DropDownItems.Add(CreateVisibilityMenuItem("Codex Week", "codexWeek"));
             visibleRowsSubMenu.DropDownOpening += new EventHandler((s, e) =>
@@ -274,6 +275,7 @@ namespace ClaudeCodexBattery
                     if (rowItem != null && rowItem.Tag is string)
                     {
                         rowItem.Checked = flyoutForm.IsMetricEnabled((string)rowItem.Tag);
+                        if ((string)rowItem.Tag == "fableWeek") rowItem.Text = ModelWk.Name;
                     }
                 }
             });
@@ -700,7 +702,7 @@ namespace ClaudeCodexBattery
 
             SetUnavailable(Claude5h, "Not connected");
             SetUnavailable(ClaudeWk, "Not connected");
-            SetUnavailable(FableWk, "Not connected");
+            SetUnavailable(ModelWk, "Not connected");
 
             if (!File.Exists(noLiveFile) && File.Exists(credFile))
             {
@@ -743,11 +745,14 @@ namespace ClaudeCodexBattery
             IDictionary<string, object> root = ParseObject(json);
             bool fiveHour = ApplyUsageWindow(Claude5h, GetObject(root, "five_hour"), "utilization", "resets_at", state, source);
             bool weekly = ApplyUsageWindow(ClaudeWk, GetObject(root, "seven_day"), "utilization", "resets_at", state, source);
-            bool fableWeekly = ParseClaudeScopedLimit(root, "Fable", FableWk, state, source);
-            return fiveHour || weekly || fableWeekly;
+            bool modelWeekly = ParseClaudeModelCap(root, ModelWk, state, source);
+            return fiveHour || weekly || modelWeekly;
         }
 
-        private bool ParseClaudeScopedLimit(IDictionary<string, object> root, string modelName,
+        // The weekly cap scoped to a model. The model is whatever the API says it
+        // is - matching a hard-coded name here made the row vanish the day the
+        // top model was renamed. Name and label follow the response.
+        private bool ParseClaudeModelCap(IDictionary<string, object> root,
             BatteryData target, ConnectionState state, string source)
         {
             object[] limits = GetValue(root, "limits") as object[];
@@ -761,11 +766,29 @@ namespace ClaudeCodexBattery
                 IDictionary<string, object> scope = GetObject(limit, "scope");
                 IDictionary<string, object> model = GetObject(scope, "model");
                 string displayName = GetString(GetValue(model, "display_name"));
-                if (!string.Equals(displayName, modelName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.IsNullOrEmpty(displayName)) continue;
 
+                target.Name = displayName + " Week";
+                target.WindowLabel = ModelCapLabel(displayName);
                 return ApplyUsageWindow(target, limit, "percent", "resets_at", state, source);
             }
             return false;
+        }
+
+        // "Fable" -> "CF", "Opus 4.8" -> "CO". C5 and CW belong to the other two
+        // Claude rows, so a name starting with those characters skips ahead.
+        public static string ModelCapLabel(string displayName)
+        {
+            if (string.IsNullOrEmpty(displayName)) return "CM";
+            string upper = displayName.ToUpperInvariant();
+            for (int i = 0; i < upper.Length; i++)
+            {
+                char c = upper[i];
+                if (!char.IsLetterOrDigit(c)) continue;
+                string cand = "C" + c;
+                if (cand != "C5" && cand != "CW") return cand;
+            }
+            return "CM";
         }
 
         private void FetchCodexUsage()
@@ -1073,8 +1096,8 @@ namespace ClaudeCodexBattery
 
         private TrayApplicationContext appContext;
         private Label lblHeader;
-        private Panel pnlClaude5h, pnlClaudeWk, pnlFableWk, pnlCodex5h, pnlCodexWk;
-        private Label lblClaude5h, lblClaudeWk, lblFableWk, lblCodex5h, lblCodexWk;
+        private Panel pnlClaude5h, pnlClaudeWk, pnlModelWk, pnlCodex5h, pnlCodexWk;
+        private Label lblClaude5h, lblClaudeWk, lblModelWk, lblCodex5h, lblCodexWk;
         private Label lblStatus;
         private Button btnRefresh, btnSettings, btnClose;
         private ContextMenuStrip settingsMenu;
@@ -1135,7 +1158,7 @@ namespace ClaudeCodexBattery
 
             pnlClaude5h = CreateMetricRow(ref y, "Claude 5h", out lblClaude5h);
             pnlClaudeWk = CreateMetricRow(ref y, "Claude Week", out lblClaudeWk);
-            pnlFableWk = CreateMetricRow(ref y, "Fable Week", out lblFableWk);
+            pnlModelWk = CreateMetricRow(ref y, TrayApplicationContext.ModelWk.Name, out lblModelWk);
             pnlCodex5h = CreateMetricRow(ref y, "Codex 5h", out lblCodex5h);
             pnlCodexWk = CreateMetricRow(ref y, "Codex Week", out lblCodexWk);
 
@@ -1296,10 +1319,10 @@ namespace ClaudeCodexBattery
         {
             bool hasClaude5h = TrayApplicationContext.Claude5h.State != ConnectionState.NotConnected && metricVisibility.Claude5h;
             bool hasClaudeWk = TrayApplicationContext.ClaudeWk.State != ConnectionState.NotConnected && metricVisibility.ClaudeWeek;
-            bool hasFableWk = TrayApplicationContext.FableWk.State != ConnectionState.NotConnected && metricVisibility.FableWeek;
+            bool hasModelWk = TrayApplicationContext.ModelWk.State != ConnectionState.NotConnected && metricVisibility.ModelWeek;
             bool hasCodex5h = TrayApplicationContext.Codex5h.State != ConnectionState.NotConnected && metricVisibility.Codex5h;
             bool hasCodexWk = TrayApplicationContext.CodexWk.State != ConnectionState.NotConnected && metricVisibility.CodexWeek;
-            bool hasClaude = hasClaude5h || hasClaudeWk || hasFableWk;
+            bool hasClaude = hasClaude5h || hasClaudeWk || hasModelWk;
             bool hasCodex = hasCodex5h || hasCodexWk;
 
             int y = 36;
@@ -1308,7 +1331,7 @@ namespace ClaudeCodexBattery
             {
                 pnlClaude5h.Visible = hasClaude5h;
                 pnlClaudeWk.Visible = hasClaudeWk;
-                pnlFableWk.Visible = hasFableWk;
+                pnlModelWk.Visible = hasModelWk;
                 if (hasClaude5h)
                 {
                     pnlClaude5h.Location = new Point(10, y); y += 39;
@@ -1319,17 +1342,17 @@ namespace ClaudeCodexBattery
                     pnlClaudeWk.Location = new Point(10, y); y += 39;
                     UpdateRow(pnlClaudeWk, lblClaudeWk, TrayApplicationContext.ClaudeWk);
                 }
-                if (hasFableWk)
+                if (hasModelWk)
                 {
-                    pnlFableWk.Location = new Point(10, y); y += 39;
-                    UpdateRow(pnlFableWk, lblFableWk, TrayApplicationContext.FableWk);
+                    pnlModelWk.Location = new Point(10, y); y += 39;
+                    UpdateRow(pnlModelWk, lblModelWk, TrayApplicationContext.ModelWk);
                 }
             }
             else
             {
                 pnlClaude5h.Visible = false;
                 pnlClaudeWk.Visible = false;
-                pnlFableWk.Visible = false;
+                pnlModelWk.Visible = false;
             }
 
             if (hasCodex)
@@ -1360,7 +1383,7 @@ namespace ClaudeCodexBattery
             lblStatus.Location = new Point(10, y);
 
             string cSrc = !hasClaude ? "Claude: Offline" : (hasClaude5h ? TrayApplicationContext.Claude5h.SourceInfo :
-                (hasClaudeWk ? TrayApplicationContext.ClaudeWk.SourceInfo : TrayApplicationContext.FableWk.SourceInfo));
+                (hasClaudeWk ? TrayApplicationContext.ClaudeWk.SourceInfo : TrayApplicationContext.ModelWk.SourceInfo));
             string xSrc = !hasCodex ? "Codex: Offline" : (hasCodex5h ? TrayApplicationContext.Codex5h.SourceInfo : TrayApplicationContext.CodexWk.SourceInfo);
 
             if (hasCodex && !hasClaude)
@@ -1387,6 +1410,12 @@ namespace ClaudeCodexBattery
 
         private void UpdateRow(Panel pnl, Label valLbl, BatteryData data)
         {
+            // The caption tracks the data, so a model rename shows up on refresh.
+            foreach (Control child in pnl.Controls)
+            {
+                Label title = child as Label;
+                if (title != null && title != valLbl) { title.Text = data.Name; break; }
+            }
             valLbl.Text = string.Format("{0}% · {1}", data.PercentLeft, data.ResetTimeStr);
             valLbl.ForeColor = Color.White;
 
@@ -1453,7 +1482,7 @@ namespace ClaudeCodexBattery
                             TrayApplicationContext.CodexWk.PercentLeft >= 0 ? TrayApplicationContext.CodexWk.PercentLeft :
                             TrayApplicationContext.Claude5h.PercentLeft >= 0 ? TrayApplicationContext.Claude5h.PercentLeft :
                             TrayApplicationContext.ClaudeWk.PercentLeft >= 0 ? TrayApplicationContext.ClaudeWk.PercentLeft :
-                            TrayApplicationContext.FableWk.PercentLeft;
+                            TrayApplicationContext.ModelWk.PercentLeft;
 
             if (TrayApplicationContext.CurrentSkin == MascotSkin.Slime)
             {
