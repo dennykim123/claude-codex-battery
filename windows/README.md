@@ -14,6 +14,7 @@ The Windows port is a dependency-free WinForms system-tray application for Windo
 - A **Visible usage rows** setting for hiding individual Claude, Fable or Codex limits; selections persist across restarts.
 
 The app never invents fallback percentages. A missing or unrecognized response is shown as unavailable.
+Codex session-log and cached windows whose reset time has passed are skipped; an unexpired window can still be shown, labeled as offline data.
 
 ## Install
 

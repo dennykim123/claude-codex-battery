@@ -78,6 +78,8 @@ public static class ParserTests
         AssertEqual(75, TrayApplicationContext.Codex5h.PercentLeft, "Codex numeric string percentage");
         AssertEqual("now", TrayApplicationContext.Codex5h.ResetTimeStr, "Expired reset is explicit");
 
+        RunCodexFallbackTests(parser);
+
         AssertThrows(delegate
         {
             parser.ParseClaudeJson("{truncated", ConnectionState.Connected, "test");
@@ -174,6 +176,93 @@ public static class ParserTests
             Fail(name + ": expected an exception");
         }
         catch { }
+    }
+
+    private static void RunCodexFallbackTests(TrayApplicationContext parser)
+    {
+        ResetUsage();
+        AssertFalse(parser.ParseCodexLiveJson(
+            "{\"rate_limit\":{\"primary_window\":{\"used_percent\":0,\"limit_window_seconds\":18000,\"reset_at\":1}}}",
+            ConnectionState.OfflineCached, "expired cache"), "Expired Codex cache is rejected");
+        AssertEqual(-1, TrayApplicationContext.Codex5h.PercentLeft, "Expired cache never displays a full battery");
+        AssertTrue(TrayApplicationContext.Codex5h.State == ConnectionState.NotConnected,
+            "Expired cache leaves Codex unavailable");
+
+        ResetUsage();
+        AssertTrue(parser.ParseCodexLiveJson(
+            "{\"rate_limit\":{\"primary_window\":{\"used_percent\":0,\"limit_window_seconds\":18000,\"reset_at\":\"1\"}," +
+            "\"secondary_window\":{\"used_percent\":34,\"limit_window_seconds\":604800,\"reset_at\":4102444800}}}",
+            ConnectionState.OfflineCached, "mixed cache"), "Codex cache keeps an unexpired weekly window");
+        AssertEqual(-1, TrayApplicationContext.Codex5h.PercentLeft, "Mixed cache omits the expired 5h window");
+        AssertEqual(66, TrayApplicationContext.CodexWk.PercentLeft, "Mixed cache preserves weekly remaining");
+        AssertTrue(TrayApplicationContext.CodexWk.State == ConnectionState.OfflineCached,
+            "Usable cache remains labeled offline");
+
+        ResetUsage();
+        AssertTrue(parser.ParseCodexLiveJson(
+            "{\"rate_limit\":{\"primary_window\":{\"used_percent\":0,\"limit_window_seconds\":18000,\"reset_at\":4102444800}}}",
+            ConnectionState.OfflineCached, "fresh cache"), "Unexpired zero-usage cache is valid");
+        AssertEqual(100, TrayApplicationContext.Codex5h.PercentLeft, "Unexpired cache may display a full battery");
+
+        ResetUsage();
+        AssertTrue(parser.ParseCodexLiveJson(
+            "{\"rate_limit\":{\"primary_window\":{\"used_percent\":25,\"limit_window_seconds\":18000}}}",
+            ConnectionState.OfflineCached, "unknown reset"), "Cache without a reset retains existing behavior");
+        AssertEqual("unknown", TrayApplicationContext.Codex5h.ResetTimeStr, "Missing cache reset remains explicit");
+
+        ResetUsage();
+        long resetSecond = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+        string boundaryWindow = "{\"rate_limit\":{\"primary_window\":{\"used_percent\":25,\"limit_window_seconds\":18000,\"reset_at\":";
+        AssertFalse(parser.ParseCodexLiveJson(boundaryWindow + resetSecond + "}}}",
+            ConnectionState.OfflineCached, "at reset"), "Offline window at the current reset second is rejected");
+        AssertEqual(-1, TrayApplicationContext.Codex5h.PercentLeft, "Reset boundary leaves the window unavailable");
+        AssertTrue(parser.ParseCodexLiveJson(boundaryWindow + (resetSecond + 60) + "}}}",
+            ConnectionState.OfflineCached, "before reset"), "Offline window before its reset is accepted");
+        AssertEqual(75, TrayApplicationContext.Codex5h.PercentLeft, "Before-reset reading preserves remaining usage");
+
+        ResetUsage();
+        AssertTrue(parser.ParseCodexLiveJson(
+            "{\"rate_limit\":{\"primary_window\":{\"used_percent\":25,\"limit_window_seconds\":18000,\"reset_at\":4102444800}," +
+            "\"secondary_window\":{\"used_percent\":0,\"limit_window_seconds\":604800,\"reset_at\":1}}}",
+            ConnectionState.OfflineCached, "expired week"), "Codex cache keeps an unexpired 5h window");
+        AssertEqual(75, TrayApplicationContext.Codex5h.PercentLeft, "Mixed cache preserves 5h remaining");
+        AssertEqual(-1, TrayApplicationContext.CodexWk.PercentLeft, "Mixed cache omits the expired weekly window");
+
+        string sessionsDirectory = Path.Combine(Environment.CurrentDirectory,
+            ".codex-fallback-tests-" + Guid.NewGuid().ToString("N"));
+        string sessionFile = Path.Combine(sessionsDirectory, "session.jsonl");
+        string expired = "{\"payload\":{\"rate_limits\":{\"primary\":{\"used_percent\":0,\"window_minutes\":300,\"resets_at\":1}}}}";
+        string usable = "{\"payload\":{\"rate_limits\":{\"primary\":{\"used_percent\":25,\"window_minutes\":300,\"resets_at\":4102444800}}}}";
+        System.Reflection.MethodInfo readSessions = typeof(TrayApplicationContext).GetMethod("ReadCodexSessionFallback",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Directory.CreateDirectory(sessionsDirectory);
+        try
+        {
+            ResetUsage();
+            File.WriteAllText(sessionFile, expired + Environment.NewLine);
+            AssertFalse((bool)readSessions.Invoke(parser, new object[] { sessionsDirectory }),
+                "All-expired session permits the next fallback source");
+            AssertEqual(-1, TrayApplicationContext.Codex5h.PercentLeft, "Expired session leaves no percentage");
+
+            ResetUsage();
+            File.WriteAllText(sessionFile, usable + Environment.NewLine + expired + Environment.NewLine);
+            AssertTrue((bool)readSessions.Invoke(parser, new object[] { sessionsDirectory }),
+                "Session scan skips expired latest event and finds usable earlier event");
+            AssertEqual(75, TrayApplicationContext.Codex5h.PercentLeft, "Session scan uses the unexpired reading");
+
+            ResetUsage();
+            File.WriteAllText(sessionFile, expired + Environment.NewLine);
+            string olderFile = Path.Combine(sessionsDirectory, "older.jsonl");
+            File.WriteAllText(olderFile, usable + Environment.NewLine);
+            File.SetLastWriteTimeUtc(olderFile, DateTime.UtcNow.AddDays(-1));
+            AssertTrue((bool)readSessions.Invoke(parser, new object[] { sessionsDirectory }),
+                "Session scan continues to an older file after expired windows");
+            AssertEqual(75, TrayApplicationContext.Codex5h.PercentLeft, "Older file supplies the unexpired reading");
+        }
+        finally
+        {
+            Directory.Delete(sessionsDirectory, true);
+        }
     }
 
     private static void Fail(string message)

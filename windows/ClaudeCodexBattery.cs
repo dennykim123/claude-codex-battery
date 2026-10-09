@@ -868,11 +868,16 @@ namespace ClaudeCodexBattery
             string durationKey, string resetKey, ConnectionState state, string source)
         {
             bool parsed = false;
+            double now = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
             IDictionary<string, object>[] windows = new IDictionary<string, object>[] { first, second };
             for (int i = 0; i < windows.Length; i++)
             {
                 IDictionary<string, object> window = windows[i];
                 if (window == null) continue;
+                // An offline reading describes the old window, not the allowance after its reset.
+                // Skip expired windows so the caller can continue looking for usable fallback data.
+                double? resetsAt = GetNumber(GetValue(window, resetKey));
+                if (state == ConnectionState.OfflineCached && resetsAt.HasValue && resetsAt.Value <= now) continue;
                 double? duration = GetNumber(GetValue(window, durationKey));
                 bool shortWindow;
                 if (duration.HasValue)
