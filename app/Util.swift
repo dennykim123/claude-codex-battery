@@ -88,13 +88,23 @@ func runCmd(_ bin: String, _ args: [String], timeout: TimeInterval = 10) -> Stri
 // Synchronous HTTP GET (only 2xx counts as success) — token stays in headers only, never in files/process args
 // If CCB_DEBUG=1, prints status/errors to stderr (for diagnostics)
 func httpGet(_ urlStr: String, headers: [String: String], timeout: TimeInterval = 8) -> Data? {
-  guard let url = URL(string: urlStr) else { return nil }
+  httpFetch(urlStr, headers: headers, timeout: timeout).data
+}
+
+// Same as httpGet, but also reports the status and Retry-After (seconds) so callers can back off on 429
+func httpFetch(_ urlStr: String, headers: [String: String], timeout: TimeInterval = 8) -> (data: Data?, status: Int, retryAfter: Int?) {
+  guard let url = URL(string: urlStr) else { return (nil, -1, nil) }
   var req = URLRequest(url: url, timeoutInterval: timeout)
   headers.forEach { req.setValue($1, forHTTPHeaderField: $0) }
   let sem = DispatchSemaphore(value: 0)
   var result: Data? = nil
+  var status = -1
+  var retryAfter: Int? = nil
   URLSession.shared.dataTask(with: req) { d, r, e in
-    let code = (r as? HTTPURLResponse)?.statusCode ?? -1
+    let http = r as? HTTPURLResponse
+    let code = http?.statusCode ?? -1
+    status = code
+    retryAfter = (http?.value(forHTTPHeaderField: "Retry-After")).flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
     if (200 ..< 300).contains(code) { result = d }
     if ProcessInfo.processInfo.environment["CCB_DEBUG"] != nil {
       let msg = "[httpGet] \(url.host ?? "?") status=\(code)\(e.map { " err=\($0.localizedDescription)" } ?? "")\n"
@@ -106,7 +116,7 @@ func httpGet(_ urlStr: String, headers: [String: String], timeout: TimeInterval 
      ProcessInfo.processInfo.environment["CCB_DEBUG"] != nil {
     FileHandle.standardError.write(Data("[httpGet] \(url.host ?? "?") semaphore TIMEOUT\n".utf8))
   }
-  return result
+  return (result, status, retryAfter)
 }
 
 // JSON access helpers (dynamic schema — built on JSONSerialization)

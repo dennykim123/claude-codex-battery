@@ -29,7 +29,10 @@ func collectSnapshot() -> Snapshot {
 func battItems(_ snap: Snapshot) -> [BattItem] {
   var items: [BattItem] = []
   if let u = snap.usage {
-    items.append(BattItem(label: "C5", remain: u.fiveHour.map { max(0, 100 - $0.pct) }))
+    // five_hour is null when no 5h window is open (or the cached copy predates one):
+    // use the local ccusage block, and with no block either nothing has been spent → full
+    let c5 = u.fiveHour.map { max(0, 100 - $0.pct) } ?? snap.block.map { max(0, 100 - $0.elapsedPct) } ?? 100
+    items.append(BattItem(label: "C5", remain: c5))
     items.append(BattItem(label: "CW", remain: u.weekly.map { max(0, 100 - $0.pct) }))
     for cap in u.modelCaps { items.append(BattItem(label: cap.label, remain: max(0, 100 - cap.pct))) }
   } else if let b = snap.block {

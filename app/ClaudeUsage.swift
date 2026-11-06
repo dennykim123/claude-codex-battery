@@ -78,14 +78,28 @@ private func readClaudeToken() -> String? {
 #endif
 }
 
+// The usage endpoint rate-limits per account, and Claude Code / statuslines poll it too.
+// After a 429, stop asking until Retry-After (or a doubling 5→30 min pause) has passed,
+// since retrying every refresh keeps the limit from ever clearing.
+private var rateLimitedUntil = 0
+private var rateLimitPause = 0
+
 private func fetchLive(now: Int) -> (data: [String: Any], measuredAt: Int, live: Bool)? {
+  if now < rateLimitedUntil { return nil }
   guard let token = readClaudeToken() else { return nil }
-  guard let raw = httpGet("https://api.anthropic.com/api/oauth/usage",
-                          headers: ["Authorization": "Bearer \(token)",
-                                    "anthropic-beta": "oauth-2025-04-20"], timeout: 5),
+  let res = httpFetch("https://api.anthropic.com/api/oauth/usage",
+                      headers: ["Authorization": "Bearer \(token)",
+                                "anthropic-beta": "oauth-2025-04-20"], timeout: 5)
+  if res.status == 429 {
+    rateLimitPause = min(1800, max(300, rateLimitPause * 2))
+    rateLimitedUntil = now + max(res.retryAfter ?? 0, rateLimitPause)
+    return nil
+  }
+  guard let raw = res.data,
         let obj = jd(try? JSONSerialization.jsonObject(with: raw)),
         obj["five_hour"] != nil
   else { invalidateClaudeToken(); return nil }
+  rateLimitPause = 0
   writeJSONFile(USAGE_CACHE, ["fetchedAt": now, "data": obj])
   return (obj, now, true)
 }
