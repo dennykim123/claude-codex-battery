@@ -17,9 +17,13 @@ struct ModelCapWindow {
   let label: String
 }
 
+// Why the last live fetch did not happen — shown in the menu instead of a generic warning
+enum ClaudeIssue { case rateLimited, loginExpired, failed }
+
 struct ClaudeUsage {
   let measuredAt: Int
   let live: Bool
+  let issue: ClaudeIssue?
   let fiveHour: UsageWindow?
   let weekly: UsageWindow?
   let modelCaps: [ModelCapWindow]
@@ -36,14 +40,21 @@ private let LEGACY_USAGE_FILES = [
 // launch (an ad-hoc-signed build would otherwise re-prompt on every 2-minute refresh);
 // a denial backs off for an hour instead of nagging.
 private var cachedClaudeToken: String?
+private var cachedClaudeTokenExp: Int?
 private var claudeTokenDeniedUntil: Int = 0
+private var claudeTokenRecheckAt: Int = 0
+private var claudeIssue: ClaudeIssue?
 
-func invalidateClaudeToken() { cachedClaudeToken = nil }
+func invalidateClaudeToken() { cachedClaudeToken = nil; cachedClaudeTokenExp = nil }
 
-private func readClaudeToken() -> String? {
-  if liveDisabled() { return nil }
-  if let t = cachedClaudeToken { return t }
-  if Int(Date().timeIntervalSince1970) < claudeTokenDeniedUntil { return nil }
+// claudeAiOauth → (accessToken, expiresAt in epoch seconds). expiresAt arrives in ms.
+private func parseClaudeCred(_ obj: Any?) -> (token: String, exp: Int?)? {
+  guard let o = jd(jd(obj)?["claudeAiOauth"]), let t = jstr(o["accessToken"]), !t.isEmpty else { return nil }
+  let exp = jn(o["expiresAt"]).map { $0 > 1e12 ? Int($0 / 1000) : Int($0) }
+  return (t, exp)
+}
+
+private func loadClaudeCred() -> (token: String, exp: Int?)? {
 #if MAS_BUILD
   // Sandboxed: query the Keychain item directly (user approves an access prompt once)
   let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
@@ -51,31 +62,38 @@ private func readClaudeToken() -> String? {
                           kSecReturnData as String: true,
                           kSecMatchLimit as String: kSecMatchLimitOne]
   var out: CFTypeRef?
-  if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
-     let d = out as? Data,
-     let obj = try? JSONSerialization.jsonObject(with: d),
-     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
-    cachedClaudeToken = t
-    return t
-  }
-  claudeTokenDeniedUntil = Int(Date().timeIntervalSince1970) + 3600
+  if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data,
+     let c = parseClaudeCred(try? JSONSerialization.jsonObject(with: d)) { return c }
   return nil
 #else
   if let raw = runCmd("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], timeout: 3),
-     let obj = try? JSONSerialization.jsonObject(with: Data(raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8)),
-     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
-    cachedClaudeToken = t
-    return t
+     let c = parseClaudeCred(try? JSONSerialization.jsonObject(with: Data(raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8))) {
+    return c
   }
   // For environments without a keychain — Claude Code's file-based credentials
-  if let obj = readJSONFile("\(HOME)/.claude/.credentials.json"),
-     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
-    cachedClaudeToken = t
-    return t
-  }
-  claudeTokenDeniedUntil = Int(Date().timeIntervalSince1970) + 3600
-  return nil
+  return parseClaudeCred(readJSONFile("\(HOME)/.claude/.credentials.json"))
 #endif
+}
+
+// The access token lives ~8h and only Claude Code renews it, so an expired one is
+// re-read at most every 5 min (Claude Code may have rewritten it) and never sent.
+private func readClaudeToken(now: Int) -> String? {
+  if liveDisabled() { return nil }
+  if let t = cachedClaudeToken, (cachedClaudeTokenExp ?? Int.max) > now + 60 { return t }
+  if now < claudeTokenDeniedUntil || now < claudeTokenRecheckAt { return nil }
+  guard let c = loadClaudeCred() else {
+    claudeTokenDeniedUntil = now + 3600
+    return nil
+  }
+  if let exp = c.exp, exp <= now + 60 {
+    invalidateClaudeToken()
+    claudeTokenRecheckAt = now + 300
+    claudeIssue = .loginExpired
+    return nil
+  }
+  cachedClaudeToken = c.token
+  cachedClaudeTokenExp = c.exp
+  return c.token
 }
 
 // The usage endpoint rate-limits per account, and Claude Code / statuslines poll it too.
@@ -91,25 +109,28 @@ private let USAGE_MIN_INTERVAL = 300
 private func fetchLive(now: Int) -> (data: [String: Any], measuredAt: Int, live: Bool)? {
   if let c = jd(readJSONFile(USAGE_CACHE)), let data = jd(c["data"]), data["five_hour"] != nil,
      let at = jn(c["fetchedAt"]).map(Int.init), now - at < USAGE_MIN_INTERVAL {
+    claudeIssue = nil
     return (data, at, true)
   }
   if now < rateLimitedUntil { return nil }
-  guard let token = readClaudeToken() else { return nil }
+  guard let token = readClaudeToken(now: now) else { return nil }
   let res = httpFetch("https://api.anthropic.com/api/oauth/usage",
                       headers: ["Authorization": "Bearer \(token)",
                                 "anthropic-beta": "oauth-2025-04-20"], timeout: 5)
-  if res.status == 429 {
-    rateLimitPause = min(1800, max(300, rateLimitPause * 2))
-    rateLimitedUntil = now + max(res.retryAfter ?? 0, rateLimitPause)
-    return nil
+  if let raw = res.data,
+     let obj = jd(try? JSONSerialization.jsonObject(with: raw)),
+     obj["five_hour"] != nil {
+    rateLimitPause = 0
+    claudeIssue = nil
+    writeJSONFile(USAGE_CACHE, ["fetchedAt": now, "data": obj])
+    return (obj, now, true)
   }
-  guard let raw = res.data,
-        let obj = jd(try? JSONSerialization.jsonObject(with: raw)),
-        obj["five_hour"] != nil
-  else { invalidateClaudeToken(); return nil }
-  rateLimitPause = 0
-  writeJSONFile(USAGE_CACHE, ["fetchedAt": now, "data": obj])
-  return (obj, now, true)
+  // Any failure pauses (5 → 30 min, or Retry-After); only an auth error drops the token
+  if res.status == 401 || res.status == 403 { invalidateClaudeToken() }
+  claudeIssue = res.status == 429 ? .rateLimited : (res.status == 401 ? .loginExpired : .failed)
+  rateLimitPause = min(1800, max(300, rateLimitPause * 2))
+  rateLimitedUntil = now + max(res.retryAfter ?? 0, rateLimitPause)
+  return nil
 }
 
 private func readFallback() -> (data: [String: Any], measuredAt: Int, live: Bool)? {
@@ -142,9 +163,12 @@ func claudeCapLabel(_ displayName: String, used: inout Set<String>) -> String {
 func getClaudeUsage(now: Int) -> ClaudeUsage? {
   guard let src = fetchLive(now: now) ?? readFallback() else { return nil }
   let d = src.data
+  // A window whose reset has passed (a cached copy after a 429 or offline) has been refilled
+  func used(_ pct: Double, _ resetsAt: Int?) -> Double { (resetsAt ?? Int.max) <= now ? 0 : pct }
   func win(_ o: Any?) -> UsageWindow? {
-    guard let w = jd(o) else { return nil }
-    return UsageWindow(pct: jn(w["utilization"]) ?? 0, resetsAt: parseISO(jstr(w["resets_at"])))
+    guard let w = jd(o), let pct = jn(w["utilization"]) else { return nil }
+    let ra = parseISO(jstr(w["resets_at"]))
+    return UsageWindow(pct: used(pct, ra), resetsAt: ra)
   }
   // Every weekly cap scoped to a model — one today (the top model), but the
   // API may report several, and dropping the extras would hide a real limit.
@@ -153,13 +177,15 @@ func getClaudeUsage(now: Int) -> ClaudeUsage? {
   for l0 in ja(d["limits"]) ?? [] {
     guard let l = jd(l0) else { continue }
     if jstr(l["group"]) == "weekly",
-       let mdl = jstr(jd(jd(l["scope"])?["model"])?["display_name"]) {
-      modelCaps.append(ModelCapWindow(pct: jn(l["percent"]) ?? 0,
-                                      resetsAt: parseISO(jstr(l["resets_at"])),
+       let mdl = jstr(jd(jd(l["scope"])?["model"])?["display_name"]),
+       let pct = jn(l["percent"]) {
+      let ra = parseISO(jstr(l["resets_at"]))
+      modelCaps.append(ModelCapWindow(pct: used(pct, ra),
+                                      resetsAt: ra,
                                       model: mdl,
                                       label: claudeCapLabel(mdl, used: &usedLabels)))
     }
   }
-  return ClaudeUsage(measuredAt: src.measuredAt, live: src.live,
+  return ClaudeUsage(measuredAt: src.measuredAt, live: src.live, issue: src.live ? nil : claudeIssue,
                      fiveHour: win(d["five_hour"]), weekly: win(d["seven_day"]), modelCaps: modelCaps)
 }

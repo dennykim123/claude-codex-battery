@@ -78,8 +78,14 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
       if let w = u.weekly { gaugeRow(menu, labels.week, pct: w.pct, resetText: resetText(w.resetsAt, now: now)) }
       for cap in u.modelCaps { gaugeRow(menu, cap.model, pct: cap.pct, resetText: resetText(cap.resetsAt, now: now)) }
       if !u.live {
-        row(menu, "⚠ " + trf("cached %@ ago — check login/network", fmtDur(now - u.measuredAt)),
-            size: 11, color: WARN)
+        let ago = fmtDur(now - u.measuredAt)
+        let msg: String
+        switch u.issue {
+        case .rateLimited?: msg = trf("cached %@ ago — usage API busy, retrying soon", ago)
+        case .loginExpired?: msg = trf("cached %@ ago — Claude login expired, open Claude Code once", ago)
+        default: msg = trf("cached %@ ago — check login/network", ago)
+        }
+        row(menu, "⚠ " + msg, size: 11, color: WARN)
       }
     }
     if let b = snap.block {

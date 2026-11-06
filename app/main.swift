@@ -33,7 +33,7 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
     // use the local ccusage block, and with no block either nothing has been spent → full
     let c5 = u.fiveHour.map { max(0, 100 - $0.pct) } ?? snap.block.map { max(0, 100 - $0.elapsedPct) } ?? 100
     items.append(BattItem(label: "C5", remain: c5))
-    items.append(BattItem(label: "CW", remain: u.weekly.map { max(0, 100 - $0.pct) }))
+    if let w = u.weekly { items.append(BattItem(label: "CW", remain: max(0, 100 - w.pct))) }
     for cap in u.modelCaps { items.append(BattItem(label: cap.label, remain: max(0, 100 - cap.pct))) }
   } else if let b = snap.block {
     items.append(BattItem(label: "C5", remain: max(0, 100 - b.elapsedPct)))
@@ -204,8 +204,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   func maybeOfferCodexConnection() {
     guard codexGrantedURL() == nil,
           !UserDefaults.standard.bool(forKey: "askedCodexAccess") else { return }
-    UserDefaults.standard.set(true, forKey: "askedCodexAccess")
     guard FileManager.default.fileExists(atPath: realHomeDir() + "/.codex") else { return }
+    UserDefaults.standard.set(true, forKey: "askedCodexAccess")
     let a = NSAlert()
     a.messageText = tr("Show Codex batteries too?")
     a.informativeText = tr("Grant one-time access to your ~/.codex folder so the app can read your Codex login. You can do this later from Settings.")
@@ -219,10 +219,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 #endif
 
+  private var refreshing = false
   @objc func refresh() {
+    if refreshing { return }
+    refreshing = true
     DispatchQueue.global(qos: .utility).async { [weak self] in
       let snap = collectSnapshot()
-      DispatchQueue.main.async { self?.render(snap) }
+      DispatchQueue.main.async { self?.refreshing = false; self?.render(snap) }
     }
   }
 

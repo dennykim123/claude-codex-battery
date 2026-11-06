@@ -24,13 +24,16 @@ func fetchLatestVersion() -> String? {
   return v
 }
 
+private var updateRetryAt = 0
+
 func getUpdateInfo(now: Int) -> (latest: String?, hasUpdate: Bool) {
 #if MAS_BUILD
   return (nil, false) // the App Store owns updates
 #endif
   let cache = jd(readJSONFile(UPDATE_CACHE))
   let age = cache.flatMap { jn($0["checkedAt"]) }.map { now - Int($0) } ?? Int.max
-  if age > 24 * 3600 {
+  if age > 24 * 3600, now >= updateRetryAt {
+    updateRetryAt = now + 3600
     DispatchQueue.global(qos: .background).async {
       if let d = httpGet(VERSION_URL, headers: [:], timeout: 8),
          let v = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),

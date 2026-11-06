@@ -49,6 +49,20 @@ private let TR: [String: [String: String]] = [
   "used": [
     "ko": "사용", "ja": "使用", "zh-Hans": "已用", "zh-Hant": "已用", "es": "usado",
   ],
+  "cached %@ ago — usage API busy, retrying soon": [
+    "ko": "%@ 전 캐시 — 사용량 API 제한, 잠시 후 재시도",
+    "ja": "%@前のキャッシュ — 使用量APIが制限中、まもなく再試行",
+    "zh-Hans": "%@ 前的缓存 — 用量 API 限流，稍后重试",
+    "zh-Hant": "%@ 前的快取 — 用量 API 限流，稍後重試",
+    "es": "caché de hace %@ — API de uso saturada, reintentando pronto",
+  ],
+  "cached %@ ago — Claude login expired, open Claude Code once": [
+    "ko": "%@ 전 캐시 — Claude 로그인 만료, Claude Code를 한 번 실행하세요",
+    "ja": "%@前のキャッシュ — Claudeのログイン期限切れ、Claude Codeを一度起動してください",
+    "zh-Hans": "%@ 前的缓存 — Claude 登录已过期，请运行一次 Claude Code",
+    "zh-Hant": "%@ 前的快取 — Claude 登入已過期，請執行一次 Claude Code",
+    "es": "caché de hace %@ — sesión de Claude caducada, abre Claude Code una vez",
+  ],
   "cached %@ ago — check login/network": [
     "ko": "%@ 전 캐시 — 로그인·네트워크 확인",
     "ja": "%@前のキャッシュ — ログイン/ネットワークを確認",

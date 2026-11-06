@@ -73,10 +73,14 @@ func runCmd(_ bin: String, _ args: [String], timeout: TimeInterval = 10) -> Stri
   p.environment = env
   let out = Pipe()
   p.standardOutput = out
-  p.standardError = Pipe()
+  p.standardError = FileHandle.nullDevice
   p.standardInput = FileHandle.nullDevice
   do { try p.run() } catch { return nil }
-  let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+  let killer = DispatchWorkItem {
+    guard p.isRunning else { return }
+    p.terminate()
+    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if p.isRunning { kill(p.processIdentifier, SIGKILL) } }
+  }
   DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
   let data = out.fileHandleForReading.readDataToEndOfFile()
   p.waitUntilExit()
@@ -134,7 +138,7 @@ func writeJSONFile(_ path: String, _ obj: Any) {
   try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
                                            withIntermediateDirectories: true)
   if let d = try? JSONSerialization.data(withJSONObject: obj) {
-    try? d.write(to: URL(fileURLWithPath: path))
+    try? d.write(to: URL(fileURLWithPath: path), options: .atomic)
   }
 }
 

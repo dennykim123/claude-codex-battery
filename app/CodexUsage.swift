@@ -61,14 +61,25 @@ private func parseCredits(_ a: Any?) -> CodexCredits? {
 
 // Live: GET /backend-api/wham/usage → normalizes the response fields (primary_window/limit_window_seconds/reset_at)
 // into the session-log format. primary/secondary are "whichever window is active at the time," so the slot is decided by window length.
+// A failed call (expired token, 429, offline) pauses live calls 5 → 30 min instead of retrying every refresh
+private var codexPausedUntil = 0
+private var codexPause = 0
+
 private func fetchCodexLive(now: Int) -> CodexUsage? {
+  if now < codexPausedUntil { return nil }
   guard let c = readCodexToken() else { return nil }
-  guard let raw = httpGet("https://chatgpt.com/backend-api/wham/usage",
-                          headers: ["Authorization": "Bearer \(c.token)",
-                                    "ChatGPT-Account-Id": c.account,
-                                    "User-Agent": "codex-cli"], timeout: 5),
+  let res = httpFetch("https://chatgpt.com/backend-api/wham/usage",
+                      headers: ["Authorization": "Bearer \(c.token)",
+                                "ChatGPT-Account-Id": c.account,
+                                "User-Agent": "codex-cli"], timeout: 5)
+  guard let raw = res.data,
         let d = jd(try? JSONSerialization.jsonObject(with: raw))
-  else { return nil }
+  else {
+    codexPause = min(1800, max(300, codexPause * 2))
+    codexPausedUntil = now + max(res.retryAfter ?? 0, codexPause)
+    return nil
+  }
+  codexPause = 0
   let rl = jd(d["rate_limit"])
   var primary: CodexWindow? = nil
   var secondary: CodexWindow? = nil
@@ -157,7 +168,9 @@ private func codexFromCache() -> CodexUsage? {
 }
 
 func getCodex(now: Int) -> CodexUsage? {
-  fetchCodexLive(now: now) ?? codexFromSessions() ?? codexFromCache()
+  if let live = fetchCodexLive(now: now) { return live }
+  // Offline: a days-old session log must not outrank a cache written minutes ago
+  return [codexFromSessions(), codexFromCache()].compactMap { $0 }.max { $0.measuredAt < $1.measuredAt }
 }
 
 func windowState(_ w: CodexWindow?, now: Int) -> WindowState? {
