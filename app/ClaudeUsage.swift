@@ -84,7 +84,15 @@ private func readClaudeToken() -> String? {
 private var rateLimitedUntil = 0
 private var rateLimitPause = 0
 
+// The endpoint allows only a handful of calls before it 429s, so a copy younger than
+// this is served as-is instead of asking again on every 2-minute refresh.
+private let USAGE_MIN_INTERVAL = 300
+
 private func fetchLive(now: Int) -> (data: [String: Any], measuredAt: Int, live: Bool)? {
+  if let c = jd(readJSONFile(USAGE_CACHE)), let data = jd(c["data"]), data["five_hour"] != nil,
+     let at = jn(c["fetchedAt"]).map(Int.init), now - at < USAGE_MIN_INTERVAL {
+    return (data, at, true)
+  }
   if now < rateLimitedUntil { return nil }
   guard let token = readClaudeToken() else { return nil }
   let res = httpFetch("https://api.anthropic.com/api/oauth/usage",
