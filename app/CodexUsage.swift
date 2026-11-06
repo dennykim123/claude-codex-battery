@@ -76,7 +76,7 @@ private func fetchCodexLive(now: Int) -> CodexUsage? {
         let d = jd(try? JSONSerialization.jsonObject(with: raw))
   else {
     codexPause = min(1800, max(300, codexPause * 2))
-    codexPausedUntil = now + max(res.retryAfter ?? 0, codexPause)
+    codexPausedUntil = now + max(min(res.retryAfter ?? 0, 1800), codexPause)
     return nil
   }
   codexPause = 0
@@ -90,7 +90,11 @@ private func fetchCodexLive(now: Int) -> CodexUsage? {
     else { secondary = parseWindow(w, resetKey: "reset_at") } // ~weekly (7 days)
   }
   let credits = (primary == nil && secondary == nil) ? parseCredits(d["credits"]) : nil
-  if primary == nil, secondary == nil, credits == nil { return nil }
+  if primary == nil, secondary == nil, credits == nil {
+    codexPause = min(1800, max(300, codexPause * 2))
+    codexPausedUntil = now + codexPause
+    return nil
+  }
   let result = CodexUsage(measuredAt: now, live: true, limitId: nil, plan: jstr(d["plan_type"]),
                           primary: primary, secondary: secondary, credits: credits)
   saveCache(result)

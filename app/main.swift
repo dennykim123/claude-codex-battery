@@ -219,13 +219,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 #endif
 
-  private var refreshing = false
+  private var refreshStartedAt: Date?
   @objc func refresh() {
-    if refreshing { return }
-    refreshing = true
+    if let t = refreshStartedAt, Date().timeIntervalSince(t) < 90 { return }
+    refreshStartedAt = Date()
     DispatchQueue.global(qos: .utility).async { [weak self] in
       let snap = collectSnapshot()
-      DispatchQueue.main.async { self?.refreshing = false; self?.render(snap) }
+      DispatchQueue.main.async { self?.refreshStartedAt = nil; self?.render(snap) }
     }
   }
 

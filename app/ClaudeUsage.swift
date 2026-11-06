@@ -83,6 +83,7 @@ private func readClaudeToken(now: Int) -> String? {
   if now < claudeTokenDeniedUntil || now < claudeTokenRecheckAt { return nil }
   guard let c = loadClaudeCred() else {
     claudeTokenDeniedUntil = now + 3600
+    claudeIssue = .failed
     return nil
   }
   if let exp = c.exp, exp <= now + 60 {
@@ -108,7 +109,7 @@ private let USAGE_MIN_INTERVAL = 300
 
 private func fetchLive(now: Int) -> (data: [String: Any], measuredAt: Int, live: Bool)? {
   if let c = jd(readJSONFile(USAGE_CACHE)), let data = jd(c["data"]), data["five_hour"] != nil,
-     let at = jn(c["fetchedAt"]).map(Int.init), now - at < USAGE_MIN_INTERVAL {
+     let at = jn(c["fetchedAt"]).map(Int.init), (0..<USAGE_MIN_INTERVAL).contains(now - at) {
     claudeIssue = nil
     return (data, at, true)
   }
@@ -126,10 +127,15 @@ private func fetchLive(now: Int) -> (data: [String: Any], measuredAt: Int, live:
     return (obj, now, true)
   }
   // Any failure pauses (5 → 30 min, or Retry-After); only an auth error drops the token
-  if res.status == 401 || res.status == 403 { invalidateClaudeToken() }
-  claudeIssue = res.status == 429 ? .rateLimited : (res.status == 401 ? .loginExpired : .failed)
+  if res.status == 401 || res.status == 403 {
+    invalidateClaudeToken()
+    claudeIssue = .loginExpired
+    rateLimitedUntil = now + 100
+    return nil
+  }
+  claudeIssue = res.status == 429 ? .rateLimited : .failed
   rateLimitPause = min(1800, max(300, rateLimitPause * 2))
-  rateLimitedUntil = now + max(res.retryAfter ?? 0, rateLimitPause)
+  rateLimitedUntil = now + max(min(res.retryAfter ?? 0, 1800), rateLimitPause)
   return nil
 }
 
