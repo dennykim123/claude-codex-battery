@@ -49,6 +49,20 @@ private let TR: [String: [String: String]] = [
   "used": [
     "ko": "사용", "ja": "使用", "zh-Hans": "已用", "zh-Hant": "已用", "es": "usado",
   ],
+  "no 5h window open": [
+    "ko": "5시간 창 없음",
+    "ja": "5時間枠なし",
+    "zh-Hans": "无进行中的 5 小时窗口",
+    "zh-Hant": "無進行中的 5 小時視窗",
+    "es": "sin ventana de 5 h abierta",
+  ],
+  "unknown until the usage API answers": [
+    "ko": "사용량 API가 응답하기 전엔 알 수 없음",
+    "ja": "使用量APIが応答するまで不明",
+    "zh-Hans": "用量 API 响应前未知",
+    "zh-Hant": "用量 API 回應前未知",
+    "es": "desconocido hasta que responda la API de uso",
+  ],
   "cached %@ ago — usage API busy, retrying soon": [
     "ko": "%@ 전 캐시 — 사용량 API 제한, 잠시 후 재시도",
     "ja": "%@前のキャッシュ — 使用量APIが制限中、まもなく再試行",

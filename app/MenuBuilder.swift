@@ -62,7 +62,15 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
   if hasClaude {
     row(menu, "Claude Code · " + tr("% left"), size: 13, color: GRAY)
     if let u = snap.usage {
-      if let w = u.fiveHour { gaugeRow(menu, labels.five, pct: w.pct, resetText: resetText(w.resetsAt, now: now)) }
+      if let w = u.fiveHour {
+        gaugeRow(menu, labels.five, pct: w.pct, resetText: resetText(w.resetsAt, now: now))
+      } else if u.live {
+        gaugeRow(menu, labels.five, pct: 0, resetText: tr("no 5h window open"))
+      } else {
+        // Matches the "?" battery: say why there is no number instead of omitting the row
+        row(menu, "\(labels.five) ?  ·  " + tr("unknown until the usage API answers"),
+            mono: true, color: GRAY)
+      }
       // Time-attack lap row: reach the reset (the finish line) before hitting 0%
       if let w = u.fiveHour, let ra = w.resetsAt, ra > now {
         let toFinish = fmtDur(ra - now)

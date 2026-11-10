@@ -29,9 +29,10 @@ func collectSnapshot() -> Snapshot {
 func battItems(_ snap: Snapshot) -> [BattItem] {
   var items: [BattItem] = []
   if let u = snap.usage {
-    // five_hour is null when no 5h window is open (or the cached copy predates one):
-    // use the local ccusage block, and with no block either nothing has been spent → full
-    let c5 = u.fiveHour.map { max(0, 100 - $0.pct) } ?? snap.block.map { max(0, 100 - $0.elapsedPct) } ?? 100
+    // A live response with five_hour null means no 5h window is open → nothing spent → full.
+    // A cached copy without it says nothing about now → nil, drawn as "?" (the ccusage
+    // block's elapsed time used to stand in here, but time passed is not quota used).
+    let c5 = u.fiveHour.map { max(0, 100 - $0.pct) } ?? (u.live ? 100 : nil)
     items.append(BattItem(label: "C5", remain: c5))
     if let w = u.weekly { items.append(BattItem(label: "CW", remain: max(0, 100 - w.pct))) }
     for cap in u.modelCaps { items.append(BattItem(label: cap.label, remain: max(0, 100 - cap.pct))) }
@@ -391,6 +392,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f)
     NSWorkspace.shared.open(URL(fileURLWithPath: f))
   }
+}
+
+// ── --render-items <path> <C5=?,CW=97,...>: saves the icon for given values as PNG ("?" = unknown) ──
+if let idx = CommandLine.arguments.firstIndex(of: "--render-items"), CommandLine.arguments.count > idx + 2 {
+  let items = CommandLine.arguments[idx + 2].split(separator: ",").map { kv -> BattItem in
+    let p = kv.split(separator: "=")
+    return BattItem(label: String(p[0]), remain: p.count > 1 ? Double(p[1]) : nil)
+  }
+  let dark = ProcessInfo.processInfo.environment["CCB_RENDER_LIGHT"] == nil
+  if let img = renderBatteryImage(dark: dark, items: items),
+     let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+     let png = rep.representation(using: .png, properties: [:]) {
+    try? png.write(to: URL(fileURLWithPath: CommandLine.arguments[idx + 1]))
+    print("saved")
+  }
+  exit(0)
 }
 
 // ── --render-glint <path>: saves an intermediate glint frame as PNG (for render verification) ──

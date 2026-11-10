@@ -21,6 +21,7 @@ private let FONT46: [Character: [String]] = [
   "9": ["0110", "1001", "1001", "0111", "0001", "0110"],
   "C": ["0110", "1001", "1000", "1000", "1001", "0110"],
   "X": ["1001", "1001", "0110", "0110", "1001", "1001"],
+  "?": ["0110", "1001", "0010", "0100", "0000", "0100"],
 ]
 // 3x5 classic pixel font (small preset)
 private let FONT35: [Character: [String]] = [
@@ -36,6 +37,7 @@ private let FONT35: [Character: [String]] = [
   "9": ["111", "101", "111", "001", "111"],
   "C": ["111", "100", "100", "100", "111"],
   "X": ["101", "101", "010", "101", "101"],
+  "?": ["111", "001", "011", "000", "010"],
 ]
 
 // Per-preset geometry (same values as the JS PRESET)
@@ -149,7 +151,11 @@ private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
   let by = midY - p.bh / 2
   cv.stroke(x, by, p.bw, p.bh, ink)
   cv.rect(x + p.bw, by + 3, 2, p.bh - 6, ink) // terminal
-  guard let remain = remain else { return }
+  // Unknown (no current reading): outline with a "?" so it never reads as an empty 0%
+  guard let remain = remain else {
+    drawNum(cv, p, x + (p.bw - numW(p, "?")) / 2, midY - p.dy, "?", ink)
+    return
+  }
   let innerW = p.bw - 4
   let v = max(0, min(100, remain))
   let fw = Int((v / 100 * Double(innerW)).rounded())
