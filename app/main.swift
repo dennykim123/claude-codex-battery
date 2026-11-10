@@ -36,8 +36,9 @@ func battItems(_ snap: Snapshot) -> [BattItem] {
     items.append(BattItem(label: "C5", remain: c5))
     if let w = u.weekly { items.append(BattItem(label: "CW", remain: max(0, 100 - w.pct))) }
     for cap in u.modelCaps { items.append(BattItem(label: cap.label, remain: max(0, 100 - cap.pct))) }
-  } else if let b = snap.block {
-    items.append(BattItem(label: "C5", remain: max(0, 100 - b.elapsedPct)))
+  } else if snap.block != nil {
+    // Spending is visible locally but no usage reading exists yet → unknown, not block time
+    items.append(BattItem(label: "C5", remain: nil))
   }
   if let cx = snap.codex, cx.primary != nil || cx.secondary != nil {
     // Only draws whichever window is active at the time — a missing window is omitted rather than shown as an empty capsule

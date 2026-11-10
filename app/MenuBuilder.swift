@@ -95,6 +95,9 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
         }
         row(menu, "⚠ " + msg, size: 11, color: WARN)
       }
+    } else {
+      row(menu, "\(labels.five) ?  ·  " + tr("unknown until the usage API answers"),
+          mono: true, color: GRAY)
     }
     if let b = snap.block {
       let cph = b.costPerHour.map { String(format: "%.1f", $0) } ?? "?"
