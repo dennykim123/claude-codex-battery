@@ -71,6 +71,18 @@ const UI_LANG = (() => {
 // Third-language table, keyed by the English string ({0}/{1} are placeholders).
 // Korean lives at the call sites (first argument of L/tf); English is the key.
 const TR3 = {
+  "no 5h window open": {
+    ja: "5時間枠なし",
+    "zh-Hans": "无进行中的 5 小时窗口",
+    "zh-Hant": "無進行中的 5 小時視窗",
+    es: "sin ventana de 5 h abierta",
+  },
+  "unknown until the usage API answers": {
+    ja: "使用量APIが応答するまで不明",
+    "zh-Hans": "用量 API 响应前未知",
+    "zh-Hant": "用量 API 回應前未知",
+    es: "desconocido hasta que responda la API de uso",
+  },
   "% left": {
     ja: "残り%",
     "zh-Hans": "剩余 %",
@@ -289,7 +301,7 @@ const CODEX_SESSIONS = `${HOME}/.codex/sessions`;
 const now = Math.floor(Date.now() / 1000);
 
 // ── Auto-update (notification + one click) ──
-const VERSION = "2.6.3";
+const VERSION = "2.7.0";
 const SELF_DIR = dirname(process.argv[1] || `${HOME}/.swiftbar-plugins/x`);
 const REPO_RAW =
   "https://raw.githubusercontent.com/dennykim123/claude-codex-battery/main";
@@ -425,6 +437,7 @@ const FONT46 = {
   9: ["0110", "1001", "1001", "0111", "0001", "0110"],
   C: ["0110", "1001", "1000", "1000", "1001", "0110"],
   X: ["1001", "1001", "0110", "0110", "1001", "1001"],
+  "?": ["0110", "1001", "0010", "0100", "0000", "0100"],
 };
 // 3x5 classic pixel font (small preset)
 const FONT35 = {
@@ -440,6 +453,7 @@ const FONT35 = {
   9: ["111", "101", "111", "001", "111"],
   C: ["111", "100", "100", "100", "111"],
   X: ["101", "101", "010", "101", "101"],
+  "?": ["111", "001", "011", "000", "010"],
 };
 // Per-preset geometry: font/advance, capsule (bw×bh), layout (capw·gaps), canvas height, digit y-offset
 const PRESET =
@@ -522,6 +536,9 @@ function drawCapsule(cv, x, midY, remain, ink, dark) {
       [30, 30, 30],
       x + 2 + (fw > 0 ? fw : 0),
     );
+  } else {
+    // Unknown (no current reading): outline with a "?" so it never reads as an empty 0%
+    drawNum(cv, x + Math.floor((bw - numW("?")) / 2), midY - PRESET.dy, "?", ink);
   }
   return x + bw + 2;
 }
@@ -726,67 +743,145 @@ const LEGACY_USAGE_FILES = [
   `${HOME}/.claude/PAI/MEMORY/STATE/usage-cache.json`,
 ];
 
-// The token exists only as a return value — never written to files, logs, or process args
-function readClaudeToken() {
+// A response object that HAS the five_hour key is a valid answer even when its value is
+// null (the API sends null while no 5h window is open) — only a missing key is a bad body.
+const hasFiveHourKey = (d) =>
+  !!d && typeof d === "object" && !Array.isArray(d) && "five_hour" in d;
+
+// The usage endpoint rate-limits per account (Claude Code and statuslines poll it too), and
+// this widget is a fresh process every 2 min — so timing state lives in files, not memory.
+const CLAUDE_USAGE_PAUSE = `${CLAUDE_STATE_DIR}/.claude-usage-pause.json`; // {until, pause, issue}
+const USAGE_MIN_INTERVAL = 300; // a cache younger than this is served as live, no new call
+const USAGE_MAX_PAUSE = 1800;
+
+// The token exists only as a return value — never written to files, logs, or process args.
+// Returns { token, exp } (exp = epoch seconds or null) or null.
+function readClaudeCred() {
   // Opt-out: `touch ~/.claude/swiftbar/.no-live` disables Keychain access / live queries
   // — clicking 'Deny' on the Keychain prompt would re-prompt every 2 minutes; use this instead.
   if (existsSync(`${CLAUDE_STATE_DIR}/.no-live`)) return null;
+  const parse = (raw) => {
+    const o = JSON.parse(raw)?.claudeAiOauth;
+    if (!o?.accessToken) return null;
+    const e = Number(o.expiresAt);
+    // expiresAt arrives in ms
+    return { token: o.accessToken, exp: e > 0 ? (e > 1e12 ? Math.floor(e / 1000) : Math.floor(e)) : null };
+  };
   try {
     if (process.platform !== "darwin") throw new Error("no keychain");
     const raw = execSync(
       'security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null',
       { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] },
     ).trim();
-    const t = JSON.parse(raw)?.claudeAiOauth?.accessToken;
-    if (t) return t;
+    const c = parse(raw);
+    if (c) return c;
   } catch {}
   try {
     // For environments without the Keychain item (e.g. manual migration) — file credentials
-    const raw = readFileSync(`${HOME}/.claude/.credentials.json`, "utf8");
-    return JSON.parse(raw)?.claudeAiOauth?.accessToken ?? null;
+    return parse(readFileSync(`${HOME}/.claude/.credentials.json`, "utf8"));
   } catch {}
   return null;
 }
 
-function fetchClaudeUsageLive() {
-  const token = readClaudeToken();
-  if (!token) return null;
+function readUsagePause() {
   try {
-    // Authorization header passed via stdin (-H @-) — keeps the token out of `ps` output
+    const p = JSON.parse(readFileSync(CLAUDE_USAGE_PAUSE, "utf8"));
+    return { until: Number(p.until) || 0, pause: Number(p.pause) || 0, issue: p.issue ?? null };
+  } catch {
+    return { until: 0, pause: 0, issue: null };
+  }
+}
+function writeUsagePause(st) {
+  try {
+    mkdirSync(CLAUDE_STATE_DIR, { recursive: true });
+    writeFileSync(CLAUDE_USAGE_PAUSE, JSON.stringify(st));
+  } catch {}
+}
+
+// Why the last live attempt did not produce a fresh answer: "rateLimited" | "loginExpired" | "failed" | null
+let claudeIssue = null;
+
+function fetchClaudeUsageLive() {
+  // 1. A recent answer (any value of five_hour, even null) is served as live — at most one call per 5 min
+  try {
+    const c = JSON.parse(readFileSync(CLAUDE_USAGE_CACHE, "utf8"));
+    const at = Number(c?.fetchedAt);
+    if (hasFiveHourKey(c?.data) && now - at >= 0 && now - at < USAGE_MIN_INTERVAL)
+      return { data: c.data, measuredAt: at, live: true };
+  } catch {}
+  // 2. Paused after a failure → don't call until the pause ends
+  const st = readUsagePause();
+  if (now < st.until) {
+    claudeIssue = st.issue;
+    return null;
+  }
+  const cred = readClaudeCred();
+  if (!cred) return null;
+  // An expired token is never sent (only Claude Code renews it)
+  if (cred.exp != null && cred.exp <= now + 60) {
+    claudeIssue = "loginExpired";
+    return null;
+  }
+  let status = -1;
+  let retryAfter = 0;
+  let body = "";
+  try {
+    // Authorization header passed via stdin (-H @-) — keeps the token out of `ps` output.
+    // -D - prints the response headers first, so the status and Retry-After can be read.
     const raw = execSync(
-      `/usr/bin/curl -fsS --max-time 5 -H @- -H "anthropic-beta: oauth-2025-04-20" https://api.anthropic.com/api/oauth/usage`,
+      `/usr/bin/curl -sS --max-time 5 -D - -H @- -H "anthropic-beta: oauth-2025-04-20" https://api.anthropic.com/api/oauth/usage`,
       {
         encoding: "utf8",
         timeout: 8000,
-        input: `Authorization: Bearer ${token}\n`,
+        input: `Authorization: Bearer ${cred.token}\n`,
         stdio: ["pipe", "pipe", "ignore"],
       },
     );
-    const d = JSON.parse(raw);
-    if (!d?.five_hour) return null;
-    try {
-      mkdirSync(CLAUDE_STATE_DIR, { recursive: true });
-      writeFileSync(
-        CLAUDE_USAGE_CACHE,
-        JSON.stringify({ fetchedAt: Math.floor(Date.now() / 1000), data: d }),
-      );
-    } catch {}
-    return { data: d, measuredAt: Math.floor(Date.now() / 1000), live: true };
-  } catch {
+    const sep = raw.lastIndexOf("\r\n\r\n", raw.indexOf("{") >= 0 ? raw.indexOf("{") : raw.length);
+    const head = sep >= 0 ? raw.slice(0, sep) : raw;
+    body = sep >= 0 ? raw.slice(sep + 4) : "";
+    status = Number(head.match(/^HTTP\/\S+\s+(\d{3})/m)?.[1]) || -1;
+    retryAfter = parseInt(head.match(/^retry-after:\s*(\d+)/im)?.[1] ?? "0", 10) || 0;
+  } catch {}
+  try {
+    const d = status >= 200 && status < 300 ? JSON.parse(body) : null;
+    if (hasFiveHourKey(d)) {
+      try {
+        mkdirSync(CLAUDE_STATE_DIR, { recursive: true });
+        writeFileSync(CLAUDE_USAGE_CACHE, JSON.stringify({ fetchedAt: now, data: d }));
+      } catch {}
+      writeUsagePause({ until: 0, pause: 0, issue: null });
+      claudeIssue = null;
+      return { data: d, measuredAt: now, live: true };
+    }
+  } catch {}
+  // Failure. 401/403 → login expired, short pause. 429/other → pause min(1800, max(300, pause*2)),
+  // or Retry-After if larger (capped at 1800)
+  if (status === 401 || status === 403) {
+    claudeIssue = "loginExpired";
+    writeUsagePause({ until: now + 100, pause: st.pause, issue: claudeIssue });
     return null;
   }
+  claudeIssue = status === 429 ? "rateLimited" : "failed";
+  const pause = Math.min(USAGE_MAX_PAUSE, Math.max(300, st.pause * 2));
+  writeUsagePause({
+    until: now + Math.max(Math.min(retryAfter, USAGE_MAX_PAUSE), pause),
+    pause,
+    issue: claudeIssue,
+  });
+  return null;
 }
 
 function readClaudeUsageFallback() {
   try {
     const c = JSON.parse(readFileSync(CLAUDE_USAGE_CACHE, "utf8"));
-    if (c?.data?.five_hour)
+    if (hasFiveHourKey(c?.data))
       return { data: c.data, measuredAt: c.fetchedAt ?? 0, live: false };
   } catch {}
   for (const f of LEGACY_USAGE_FILES) {
     try {
       const d = JSON.parse(readFileSync(f, "utf8"));
-      if (d?.five_hour)
+      if (hasFiveHourKey(d))
         return {
           data: d,
           measuredAt: Math.floor(statSync(f).mtimeMs / 1000),
@@ -827,8 +922,13 @@ function getClaudeUsage() {
   const { data: d, measuredAt, live } = src;
   try {
     const toTs = (iso) => (iso ? Math.floor(Date.parse(iso) / 1000) : null);
-    const win = (o) =>
-      o ? { pct: o.utilization ?? 0, resetsAt: toTs(o.resets_at) } : null;
+    // A window whose reset has passed (a cached copy after a 429 or offline) has been refilled
+    const used = (pct, resetsAt) => (resetsAt != null && resetsAt <= now ? 0 : pct);
+    const win = (o) => {
+      if (!o || typeof o.utilization !== "number") return null;
+      const resetsAt = toTs(o.resets_at);
+      return { pct: used(o.utilization, resetsAt), resetsAt };
+    };
     // Every weekly cap scoped to a model — one today (the top model), but the
     // API may report several. Names and labels come from the response, so a
     // model rename or addition needs no change here.
@@ -837,9 +937,11 @@ function getClaudeUsage() {
     for (const l of d.limits || []) {
       const mdl = l.scope?.model?.display_name;
       if (l.group !== "weekly" || !mdl) continue;
+      if (typeof l.percent !== "number") continue;
+      const resetsAt = toTs(l.resets_at);
       modelCaps.push({
-        pct: l.percent ?? 0,
-        resetsAt: toTs(l.resets_at),
+        pct: used(l.percent, resetsAt),
+        resetsAt,
         model: mdl,
         label: claudeCapLabel(mdl, usedLabels),
       });
@@ -847,6 +949,7 @@ function getClaudeUsage() {
     return {
       measuredAt,
       live,
+      issue: live ? null : claudeIssue,
       fiveHour: win(d.five_hour),
       weekly: win(d.seven_day),
       modelCaps,
@@ -1061,12 +1164,16 @@ if (CLI_MODE) {
   const resetTxt = (ts) =>
     ts ? (ts < now ? L("리셋됨", "reset") : `${L("리셋", "resets")} ${fmtDur(ts - now)}`) : "";
   if (cusage) {
+    // five_hour null: live → no window open → full; cached → unknown (never ccusage block time)
     if (cusage.fiveHour) rows.push({ label: "C5", remain: rem(cusage.fiveHour.pct), reset: resetTxt(cusage.fiveHour.resetsAt) });
+    else if (cusage.live) rows.push({ label: "C5", remain: 100, reset: L("5시간 창 없음", "no 5h window open") });
+    else rows.push({ label: "C5", remain: null, reset: L("사용량 API가 응답하기 전엔 알 수 없음", "unknown until the usage API answers") });
     if (cusage.weekly) rows.push({ label: "CW", remain: rem(cusage.weekly.pct), reset: resetTxt(cusage.weekly.resetsAt) });
     for (const cap of cusage.modelCaps ?? [])
       rows.push({ label: cap.label, remain: rem(cap.pct), reset: resetTxt(cap.resetsAt) });
   } else if (claude && !claude.error) {
-    rows.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct), reset: `${L("리셋", "resets")} ${fmtDur(claude.remainMin * 60)}` });
+    // Spending is visible locally but no usage reading exists → unknown, not block time
+    rows.push({ label: "C5", remain: null, reset: L("사용량 API가 응답하기 전엔 알 수 없음", "unknown until the usage API answers") });
   }
   if (codex && (codex.primary || codex.secondary)) {
     const p = windowState(codex.primary);
@@ -1140,12 +1247,14 @@ const hasCodex = !!codex;
 const battItems = [];
 // Claude — 3 capsules with usage data, or C5 only from the ccusage block. Neither → skip.
 if (cusage) {
-  battItems.push({ label: "C5", remain: rem(cusage.fiveHour?.pct) });
-  battItems.push({ label: "CW", remain: rem(cusage.weekly?.pct) });
+  // A live answer with five_hour null = no 5h window open → nothing spent → full.
+  // A cached copy without it says nothing about now → null, drawn as "?".
+  battItems.push({ label: "C5", remain: cusage.fiveHour ? rem(cusage.fiveHour.pct) : cusage.live ? 100 : null });
+  if (cusage.weekly) battItems.push({ label: "CW", remain: rem(cusage.weekly.pct) });
   for (const cap of cusage.modelCaps ?? [])
     battItems.push({ label: cap.label, remain: rem(cap.pct) });
 } else if (claude && !claude.error) {
-  battItems.push({ label: "C5", remain: Math.max(0, 100 - claude.elapsedPct) });
+  battItems.push({ label: "C5", remain: null });
 }
 // Codex — only with session data. No Codex → no X batteries at all.
 if (codex && (codex.primary || codex.secondary)) {
@@ -1203,19 +1312,26 @@ if (legendParts.length) {
 if (hasClaude) {
   out.push("Claude Code | size=13 color=#8b949e");
   if (cusage) {
-    const winRow = (label, w) => {
+    const winRow = (label, w, resetOverride) => {
       if (!w) return;
       const r = Math.max(0, 100 - (w.pct ?? 0));
-      const reset = w.resetsAt
+      let reset = w.resetsAt
         ? w.resetsAt < now
           ? L("리셋됨", "reset")
           : `${L("리셋", "resets")} ${fmtDur(w.resetsAt - now)}`
         : "";
+      if (resetOverride) reset = resetOverride;
       out.push(
         `${label} ▕${bar(r, 20)}▏ ${Math.round(r)}%  (${L("사용", "used")} ${Math.round(w.pct ?? 0)}%)${reset ? "  ·  " + reset : ""} | font=Menlo color=${heatRemainHex(r)}`,
       );
     };
-    winRow(L("5시간 남음", "5h left  "), cusage.fiveHour);
+    if (cusage.fiveHour) winRow(L("5시간 남음", "5h left  "), cusage.fiveHour);
+    else if (cusage.live)
+      winRow(L("5시간 남음", "5h left  "), { pct: 0, resetsAt: null }, L("5시간 창 없음", "no 5h window open"));
+    else
+      out.push(
+        `${L("5시간 남음", "5h left  ")} ?  ·  ${L("사용량 API가 응답하기 전엔 알 수 없음", "unknown until the usage API answers")} | font=Menlo color=#8b949e`,
+      );
     winRow(L("주간 남음 ", "wk left  "), cusage.weekly);
     for (const cap of cusage.modelCaps ?? [])
       winRow(`${cap.model} ${L("남음", "left")}`, cap);
@@ -1223,6 +1339,11 @@ if (hasClaude) {
       cusage.live
         ? `${L("라이브 (Anthropic usage API — 전 디바이스 합산)", "live (Anthropic usage API — all devices combined)")} | size=11 color=#8b949e`
         : `${tf("측정 {0} 전 (캐시 폴백 — Claude Code 로그인·네트워크 확인)", "cached {0} ago (fallback — check Claude Code login/network)", fmtDur(now - cusage.measuredAt))} | size=11 color=#d29922`,
+    );
+  }
+  if (!cusage && claude && !claude.error) {
+    out.push(
+      `${L("5시간 남음", "5h left  ")} ?  ·  ${L("사용량 API가 응답하기 전엔 알 수 없음", "unknown until the usage API answers")} | font=Menlo color=#8b949e`,
     );
   }
   if (claude && !claude.error) {

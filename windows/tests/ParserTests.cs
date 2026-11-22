@@ -96,6 +96,58 @@ public static class ParserTests
         AssertEqual(75, TrayApplicationContext.Codex5h.PercentLeft, "Codex numeric string percentage");
         AssertEqual("now", TrayApplicationContext.Codex5h.ResetTimeStr, "Expired reset is explicit");
 
+        // The API answers 200 with "five_hour": null while no 5h window is open. That is a
+        // valid answer (live -> nothing spent -> 100% left), and the unknown case is never
+        // filled in with a made-up number.
+        ResetUsage();
+        AssertTrue(parser.ParseClaudeJson(
+            "{\"five_hour\":null,\"seven_day\":{\"utilization\":40,\"resets_at\":\"2099-01-02T00:00:00Z\"}}",
+            ConnectionState.Connected, "test"), "Claude accepts a live five_hour null");
+        AssertEqual(100, TrayApplicationContext.Claude5h.PercentLeft, "Live five_hour null reads as full");
+        AssertEqual("no 5h window open", TrayApplicationContext.Claude5h.ResetTimeStr, "Live five_hour null says no window is open");
+        AssertTrue(TrayApplicationContext.Claude5h.State == ConnectionState.Connected, "Live five_hour null counts as connected");
+        AssertEqual(60, TrayApplicationContext.ClaudeWk.PercentLeft, "Weekly still parses next to five_hour null");
+
+        ResetUsage();
+        AssertTrue(parser.ParseClaudeJson(
+            "{\"five_hour\":null,\"seven_day\":{\"utilization\":40,\"resets_at\":\"2099-01-02T00:00:00Z\"}}",
+            ConnectionState.OfflineCached, "test"), "Claude accepts a cached five_hour null");
+        AssertEqual(-1, TrayApplicationContext.Claude5h.PercentLeft, "Cached five_hour null stays unknown, not full");
+        AssertEqual("unknown until the usage API answers", TrayApplicationContext.Claude5h.ResetTimeStr, "Cached five_hour null explains the unknown");
+        AssertTrue(TrayApplicationContext.Claude5h.State == ConnectionState.OfflineCached, "Cached five_hour null keeps the row visible");
+
+        ResetUsage();
+        AssertTrue(parser.ParseClaudeJson(
+            "{\"five_hour\":null}", ConnectionState.Connected, "test"), "Claude accepts five_hour null as the only field");
+        AssertFalse(parser.ParseClaudeJson("{\"seven_day\":null}", ConnectionState.Connected, "test"), "Claude rejects a body without the five_hour key and no data");
+
+        // A cached window whose reset has passed has refilled; a future reset keeps its number
+        ResetUsage();
+        AssertTrue(parser.ParseClaudeJson(
+            "{\"five_hour\":{\"utilization\":80,\"resets_at\":\"2000-01-01T00:00:00Z\"}," +
+            "\"seven_day\":{\"utilization\":40,\"resets_at\":\"2099-01-02T00:00:00Z\"}}",
+            ConnectionState.OfflineCached, "test"), "Claude parses a cached window past its reset");
+        AssertEqual(100, TrayApplicationContext.Claude5h.PercentLeft, "Expired cached 5h window reads as 0% used");
+        AssertEqual(60, TrayApplicationContext.ClaudeWk.PercentLeft, "Unexpired weekly window keeps its usage");
+
+        // Ask-at-most-every-5-minutes and the failure pause
+        DateTime t0 = new DateTime(2026, 11, 22, 12, 0, 0, DateTimeKind.Utc);
+        AssertTrue(TrayApplicationContext.IsUsageCacheFresh(t0.AddSeconds(-299), t0), "Cache 299s old is served as live");
+        AssertFalse(TrayApplicationContext.IsUsageCacheFresh(t0.AddSeconds(-300), t0), "Cache 300s old is asked again");
+        AssertFalse(TrayApplicationContext.IsUsageCacheFresh(t0.AddSeconds(60), t0), "Cache from the future is not trusted");
+        AssertEqual(300, TrayApplicationContext.NextUsagePauseSeconds(0), "First pause is 5 minutes");
+        AssertEqual(600, TrayApplicationContext.NextUsagePauseSeconds(300), "Pause doubles");
+        AssertEqual(1200, TrayApplicationContext.NextUsagePauseSeconds(600), "Pause doubles again");
+        AssertEqual(1800, TrayApplicationContext.NextUsagePauseSeconds(1200), "Pause caps at 30 minutes");
+        AssertEqual(1800, TrayApplicationContext.NextUsagePauseSeconds(1800), "Pause stays at the cap");
+        AssertEqual(300, TrayApplicationContext.UsagePauseSecondsFor(300, 120), "Smaller Retry-After keeps the pause");
+        AssertEqual(900, TrayApplicationContext.UsagePauseSecondsFor(300, 900), "Larger Retry-After wins");
+        AssertEqual(1800, TrayApplicationContext.UsagePauseSecondsFor(300, 99999), "Retry-After is capped at 30 minutes");
+        System.Collections.Generic.Dictionary<string, object> withNull = new System.Collections.Generic.Dictionary<string, object>();
+        withNull["five_hour"] = null;
+        AssertTrue(TrayApplicationContext.HasFiveHourKey(withNull), "A null five_hour value still counts as the key being present");
+        AssertFalse(TrayApplicationContext.HasFiveHourKey(new System.Collections.Generic.Dictionary<string, object>()), "No key is not an answer");
+
         AssertThrows(delegate
         {
             parser.ParseClaudeJson("{truncated", ConnectionState.Connected, "test");

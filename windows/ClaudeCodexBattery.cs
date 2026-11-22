@@ -440,7 +440,10 @@ namespace ClaudeCodexBattery
             if (hasClaude)
             {
                 BatteryData claudeTip = Claude5h.PercentLeft >= 0 ? Claude5h : ClaudeWk;
-                tooltip.AppendLine(string.Format("Claude: {0}% left (resets {1})", claudeTip.PercentLeft, claudeTip.ResetTimeStr));
+                if (claudeTip.PercentLeft >= 0)
+                    tooltip.AppendLine(string.Format("Claude: {0}% left (resets {1})", claudeTip.PercentLeft, claudeTip.ResetTimeStr));
+                else
+                    tooltip.AppendLine("Claude: 5h unknown");
             }
             if (!hasCodex && !hasClaude)
             {
@@ -691,6 +694,56 @@ namespace ClaudeCodexBattery
 
         private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
 
+        // The usage endpoint rate-limits per account (Claude Code and statuslines poll it too).
+        // Ask at most once per 5 minutes, and after a failure stay quiet until the pause ends.
+        internal const int UsageMinIntervalSeconds = 300;
+        internal const int UsageMaxPauseSeconds = 1800;
+        internal const string NoWindowOpenText = "no 5h window open";
+        internal const string UnknownFiveHourText = "unknown until the usage API answers";
+        private static DateTime claudeRetryAfterUtc = DateTime.MinValue;
+        private static int claudePauseSeconds = 0;
+        // Why the last live attempt gave no fresh answer: "rateLimited" | "loginExpired" | "failed" | null
+        internal static string ClaudeIssue;
+
+        // A cached answer younger than the minimum interval is served as live instead of asking again
+        internal static bool IsUsageCacheFresh(DateTime writtenUtc, DateTime nowUtc)
+        {
+            double age = (nowUtc - writtenUtc).TotalSeconds;
+            return age >= 0 && age < UsageMinIntervalSeconds;
+        }
+
+        // Doubling pause after each failure: 5 -> 10 -> 20 -> 30 min
+        internal static int NextUsagePauseSeconds(int previousPause)
+        {
+            return Math.Min(UsageMaxPauseSeconds, Math.Max(300, previousPause * 2));
+        }
+
+        // How long to stay quiet: the pause, or Retry-After when that is larger (capped)
+        internal static int UsagePauseSecondsFor(int pause, int retryAfterSeconds)
+        {
+            return Math.Max(Math.Min(Math.Max(retryAfterSeconds, 0), UsageMaxPauseSeconds), pause);
+        }
+
+        // A response object that HAS the five_hour key is a valid answer even when its value is
+        // null (the API sends null while no 5h window is open). Only a missing key is a bad body.
+        internal static bool HasFiveHourKey(IDictionary<string, object> root)
+        {
+            return root != null && root.ContainsKey("five_hour");
+        }
+
+        private void NoteClaudeUsageFailure(int status, int retryAfterSeconds, DateTime nowUtc)
+        {
+            if (status == 401 || status == 403)
+            {
+                ClaudeIssue = "loginExpired";
+                claudeRetryAfterUtc = nowUtc.AddSeconds(100);
+                return;
+            }
+            ClaudeIssue = status == 429 ? "rateLimited" : "failed";
+            claudePauseSeconds = NextUsagePauseSeconds(claudePauseSeconds);
+            claudeRetryAfterUtc = nowUtc.AddSeconds(UsagePauseSecondsFor(claudePauseSeconds, retryAfterSeconds));
+        }
+
         private void FetchClaudeUsage()
         {
             string userDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -699,37 +752,99 @@ namespace ClaudeCodexBattery
             string cacheFile = Path.Combine(stateDir, ".claude-usage-windows.json");
             string noLiveFile = Path.Combine(stateDir, ".no-live");
             bool success = false;
+            DateTime nowUtc = DateTime.UtcNow;
 
             SetUnavailable(Claude5h, "Not connected");
             SetUnavailable(ClaudeWk, "Not connected");
             SetUnavailable(ModelWk, "Not connected");
 
-            if (!File.Exists(noLiveFile) && File.Exists(credFile))
+            // 1. A recent answer (any value of five_hour, even null) counts as live - no new call
+            if (File.Exists(cacheFile))
             {
                 try
                 {
-                    IDictionary<string, object> credentials = ParseObject(File.ReadAllText(credFile));
-                    string token = GetString(GetValue(GetObject(credentials, "claudeAiOauth"), "accessToken"));
-                    if (!string.IsNullOrEmpty(token))
+                    if (IsUsageCacheFresh(File.GetLastWriteTimeUtc(cacheFile), nowUtc))
                     {
-                        HttpWebRequest req = CreateRequest("https://api.anthropic.com/api/oauth/usage", token);
-                        req.Headers.Add("anthropic-beta", "oauth-2025-04-20");
-                        using (WebResponse resp = req.GetResponse())
-                        using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                        string cached = File.ReadAllText(cacheFile);
+                        if (HasFiveHourKey(ParseObject(cached)))
                         {
-                            string json = sr.ReadToEnd();
-                            success = ParseClaudeJson(json, ConnectionState.Connected, "Live Anthropic OAuth API");
-                            if (success)
-                            {
-                                Directory.CreateDirectory(stateDir);
-                                WriteCacheAtomic(cacheFile, json);
-                            }
+                            success = ParseClaudeJson(cached, ConnectionState.Connected, "Live Anthropic OAuth API");
+                            if (success) ClaudeIssue = null;
                         }
                     }
                 }
                 catch { }
             }
 
+            // 2. Ask the API, unless disabled or paused after an earlier failure
+            if (!success && !File.Exists(noLiveFile) && File.Exists(credFile) && nowUtc >= claudeRetryAfterUtc)
+            {
+                try
+                {
+                    IDictionary<string, object> credentials = ParseObject(File.ReadAllText(credFile));
+                    IDictionary<string, object> oauth = GetObject(credentials, "claudeAiOauth");
+                    string token = GetString(GetValue(oauth, "accessToken"));
+                    double? expiresAt = GetNumber(GetValue(oauth, "expiresAt")); // epoch ms
+                    bool expired = expiresAt.HasValue &&
+                        (expiresAt.Value > 1e12 ? expiresAt.Value / 1000.0 : expiresAt.Value) <= (nowUtc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds + 60;
+                    if (!string.IsNullOrEmpty(token) && expired)
+                    {
+                        // An expired token is never sent - only Claude Code renews it
+                        ClaudeIssue = "loginExpired";
+                    }
+                    else if (!string.IsNullOrEmpty(token))
+                    {
+                        int status = -1;
+                        int retryAfter = 0;
+                        string json = null;
+                        try
+                        {
+                            HttpWebRequest req = CreateRequest("https://api.anthropic.com/api/oauth/usage", token);
+                            req.Headers.Add("anthropic-beta", "oauth-2025-04-20");
+                            using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                            using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                            {
+                                status = (int)resp.StatusCode;
+                                json = sr.ReadToEnd();
+                            }
+                        }
+                        catch (WebException ex)
+                        {
+                            HttpWebResponse errResp = ex.Response as HttpWebResponse;
+                            if (errResp != null)
+                            {
+                                status = (int)errResp.StatusCode;
+                                int.TryParse(errResp.Headers["Retry-After"], out retryAfter);
+                                errResp.Close();
+                            }
+                        }
+
+                        if (json != null && status >= 200 && status < 300)
+                        {
+                            try
+                            {
+                                if (HasFiveHourKey(ParseObject(json)))
+                                {
+                                    success = ParseClaudeJson(json, ConnectionState.Connected, "Live Anthropic OAuth API");
+                                    if (success)
+                                    {
+                                        Directory.CreateDirectory(stateDir);
+                                        WriteCacheAtomic(cacheFile, json);
+                                        claudePauseSeconds = 0;
+                                        claudeRetryAfterUtc = DateTime.MinValue;
+                                        ClaudeIssue = null;
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                        if (!success) NoteClaudeUsageFailure(status, retryAfter, nowUtc);
+                    }
+                }
+                catch { }
+            }
+
+            // 3. Last good answer from disk (a window past its reset reads as refilled)
             if (!success && File.Exists(cacheFile))
             {
                 try
@@ -743,8 +858,28 @@ namespace ClaudeCodexBattery
         internal bool ParseClaudeJson(string json, ConnectionState state, string source)
         {
             IDictionary<string, object> root = ParseObject(json);
-            bool fiveHour = ApplyUsageWindow(Claude5h, GetObject(root, "five_hour"), "utilization", "resets_at", state, source);
-            bool weekly = ApplyUsageWindow(ClaudeWk, GetObject(root, "seven_day"), "utilization", "resets_at", state, source);
+            bool fiveHour;
+            if (GetObject(root, "five_hour") != null)
+            {
+                fiveHour = ApplyUsageWindow(Claude5h, GetObject(root, "five_hour"), "utilization", "resets_at", state, source, true);
+            }
+            else if (HasFiveHourKey(root))
+            {
+                // five_hour present but null. A live answer means no 5h window is open, so nothing
+                // is spent -> 100% left. A cached copy says nothing about now -> unknown ("?"),
+                // never a stand-in such as elapsed block time.
+                Claude5h.PercentLeft = state == ConnectionState.Connected ? 100 : -1;
+                Claude5h.ResetTimeStr = state == ConnectionState.Connected ? NoWindowOpenText : UnknownFiveHourText;
+                Claude5h.State = state;
+                Claude5h.SourceInfo = source;
+                Claude5h.LastUpdated = DateTime.Now;
+                fiveHour = true;
+            }
+            else
+            {
+                fiveHour = false;
+            }
+            bool weekly = ApplyUsageWindow(ClaudeWk, GetObject(root, "seven_day"), "utilization", "resets_at", state, source, true);
             bool modelWeekly = ParseClaudeModelCap(root, ModelWk, state, source);
             return fiveHour || weekly || modelWeekly;
         }
@@ -770,7 +905,7 @@ namespace ClaudeCodexBattery
 
                 target.Name = displayName + " Week";
                 target.WindowLabel = ModelCapLabel(displayName);
-                return ApplyUsageWindow(target, limit, "percent", "resets_at", state, source);
+                return ApplyUsageWindow(target, limit, "percent", "resets_at", state, source, true);
             }
             return false;
         }
@@ -924,11 +1059,17 @@ namespace ClaudeCodexBattery
         }
 
         private bool ApplyUsageWindow(BatteryData target, IDictionary<string, object> window, string usedKey,
-            string resetKey, ConnectionState state, string source)
+            string resetKey, ConnectionState state, string source, bool refillExpired = false)
         {
             if (window == null) return false;
             double? used = GetNumber(GetValue(window, usedKey));
             if (!used.HasValue) return false;
+            // Claude: a window whose reset has passed (cached copy after a 429 or offline) has refilled
+            if (refillExpired)
+            {
+                DateTime? resetUtc = ParseResetUtc(GetValue(window, resetKey));
+                if (resetUtc.HasValue && resetUtc.Value <= DateTime.UtcNow) used = 0.0;
+            }
             target.PercentLeft = Math.Max(0, Math.Min(100, (int)Math.Round(100.0 - used.Value)));
             target.ResetTimeStr = FormatReset(GetValue(window, resetKey));
             target.State = state;
@@ -943,6 +1084,20 @@ namespace ClaudeCodexBattery
             data.ResetTimeStr = "Unavailable";
             data.State = ConnectionState.NotConnected;
             data.SourceInfo = source;
+        }
+
+        private static DateTime? ParseResetUtc(object value)
+        {
+            if (value == null) return null;
+            DateTimeOffset resetAt;
+            string text = value as string;
+            if (!string.IsNullOrEmpty(text) && DateTimeOffset.TryParse(text, out resetAt)) return resetAt.UtcDateTime;
+            try
+            {
+                double epoch = Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture);
+                return new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(epoch);
+            }
+            catch { return null; }
         }
 
         private string FormatReset(object value)
@@ -1416,7 +1571,9 @@ namespace ClaudeCodexBattery
                 Label title = child as Label;
                 if (title != null && title != valLbl) { title.Text = data.Name; break; }
             }
-            valLbl.Text = string.Format("{0}% · {1}", data.PercentLeft, data.ResetTimeStr);
+            valLbl.Text = data.PercentLeft < 0
+                ? string.Format("? · {0}", data.ResetTimeStr)
+                : string.Format("{0}% · {1}", data.PercentLeft, data.ResetTimeStr);
             valLbl.ForeColor = Color.White;
 
             pnl.Paint -= Panel_Paint;
