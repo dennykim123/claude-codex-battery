@@ -61,6 +61,8 @@ Colors follow a traffic-light scale: green ≥ 50 % left, amber < 50 %, red < 20
 
 > **Note:** This widget shows *your own account's* limits — via your local Claude Code login and your local Codex session logs. If you don't use Claude Code (or Codex), there simply won't be any data to display.
 
+> **Two or more accounts?** The macOS app (v2.7.0+) finds every Claude Code login on the Mac (each `CLAUDE_CONFIG_DIR` keeps its own Keychain item) and every Codex login in a `~/.codex*` folder (`CODEX_HOME`). The menu lists each one by email, and **Settings → Menu bar account** picks which one the batteries follow. The same account signed in twice shows once. The SwiftBar widget and the Linux/Windows versions still read the default login only.
+
 ---
 
 ## Install

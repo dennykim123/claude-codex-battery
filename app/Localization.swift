@@ -63,6 +63,37 @@ private let TR: [String: [String: String]] = [
     "zh-Hant": "用量 API 回應前未知",
     "es": "desconocido hasta que responda la API de uso",
   ],
+  "no reading yet — usage API busy, retrying soon": [
+    "ko": "아직 받은 값 없음 — 사용량 API 제한, 잠시 후 재시도",
+    "ja": "まだ取得できていません — 使用量APIが制限中、まもなく再試行",
+    "zh-Hans": "尚无读数 — 用量 API 限流，稍后重试",
+    "zh-Hant": "尚無讀數 — 用量 API 限流，稍後重試",
+    "es": "aún sin lectura — API de uso saturada, reintentando pronto",
+  ],
+  "no reading yet — Claude login expired, open Claude Code once": [
+    "ko": "아직 받은 값 없음 — Claude 로그인 만료, Claude Code를 한 번 실행하세요",
+    "ja": "まだ取得できていません — Claudeのログイン期限切れ、Claude Codeを一度起動してください",
+    "zh-Hans": "尚无读数 — Claude 登录已过期，请运行一次 Claude Code",
+    "zh-Hant": "尚無讀數 — Claude 登入已過期，請執行一次 Claude Code",
+    "es": "aún sin lectura — sesión de Claude caducada, abre Claude Code una vez",
+  ],
+  "no reading yet — check login/network": [
+    "ko": "아직 받은 값 없음 — 로그인·네트워크 확인",
+    "ja": "まだ取得できていません — ログイン/ネットワークを確認",
+    "zh-Hans": "尚无读数 — 请检查登录/网络",
+    "zh-Hant": "尚無讀數 — 請檢查登入/網路",
+    "es": "aún sin lectura — revisa sesión/red",
+  ],
+  "Menu bar account": [
+    "ko": "메뉴 막대에 표시할 계정",
+    "ja": "メニューバーに表示するアカウント",
+    "zh-Hans": "菜单栏显示的账户",
+    "zh-Hant": "選單列顯示的帳號",
+    "es": "Cuenta en la barra de menús",
+  ],
+  "account %d": [
+    "ko": "계정 %d", "ja": "アカウント %d", "zh-Hans": "账户 %d", "zh-Hant": "帳號 %d", "es": "cuenta %d",
+  ],
   "cached %@ ago — usage API busy, retrying soon": [
     "ko": "%@ 전 캐시 — 사용량 API 제한, 잠시 후 재시도",
     "ja": "%@前のキャッシュ — 使用量APIが制限中、まもなく再試行",

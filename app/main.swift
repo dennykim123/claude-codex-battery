@@ -18,10 +18,10 @@ func swiftBarDuplicate() -> Bool {
 func collectSnapshot() -> Snapshot {
   let now = Int(Date().timeIntervalSince1970)
   return Snapshot(now: now,
-                  usage: getClaudeUsage(now: now),
+                  claudeAll: getClaudeUsages(now: now),
                   block: getClaudeBlock(now: now),
                   models: getClaudeModels(),
-                  codex: getCodex(now: now),
+                  codexAll: getCodexAll(now: now),
                   update: getUpdateInfo(now: now))
 }
 
@@ -151,6 +151,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  // Settings → Menu bar account: repr is "claude\t<Keychain service>" or "codex\t<CODEX_HOME>"
+  @objc func setBarAccount(_ sender: NSMenuItem) {
+    guard let v = sender.representedObject as? String else { return }
+    let parts = v.split(separator: "\t", maxSplits: 1).map(String.init)
+    guard parts.count == 2 else { return }
+    UserDefaults.standard.set(parts[1], forKey: parts[0] == "codex" ? CODEX_BAR_KEY : CLAUDE_BAR_KEY)
+    rerender() // the snapshot already holds every login; only the order changes
+  }
+
   // Cat style choice from Settings → Cat
   @objc func setCatStyle(_ sender: NSMenuItem) {
     guard let raw = sender.representedObject as? String else { return }
@@ -222,10 +231,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 #endif
 
   private var refreshStartedAt: Date?
+  // Serial: per-login caches and pauses are plain dictionaries, so two collections must
+  // never overlap, even when one outlasts the 90s guard (many logins, all timing out)
+  private let collectQueue = DispatchQueue(label: "ccb.collect", qos: .utility)
   @objc func refresh() {
     if let t = refreshStartedAt, Date().timeIntervalSince(t) < 90 { return }
     refreshStartedAt = Date()
-    DispatchQueue.global(qos: .utility).async { [weak self] in
+    collectQueue.async { [weak self] in
       let snap = collectSnapshot()
       DispatchQueue.main.async { self?.refreshStartedAt = nil; self?.render(snap) }
     }
@@ -466,24 +478,31 @@ if CommandLine.arguments.contains("--dump-menu") {
 if CommandLine.arguments.contains("--dump") {
   let snap = collectSnapshot()
   print("now:", snap.now)
-  if let u = snap.usage {
-    print("claude.live:", u.live)
-    if let w = u.fiveHour { print("claude.5h: used \(w.pct)% resetsAt \(w.resetsAt ?? -1)") }
-    if let w = u.weekly { print("claude.weekly: used \(w.pct)% resetsAt \(w.resetsAt ?? -1)") }
-    for cap in u.modelCaps { print("claude.modelCap[\(cap.label)] \(cap.model): used \(cap.pct)%") }
-  } else { print("claude: nil") }
+  print("claude.accounts:", snap.claudeAll.count, "bar:", snap.usage?.account.service ?? "-")
+  for u in snap.claude {
+    let a = u.account
+    print("claude[\(a.service)] default:\(a.isDefault) label:\(a.label ?? "-") login:\(a.cred != nil)",
+          "live:\(u.live) measuredAt:\(u.measuredAt) issue:\(u.issue.map { "\($0)" } ?? "-")")
+    if let w = u.fiveHour { print("  5h: used \(w.pct)% resetsAt \(w.resetsAt ?? -1)") }
+    if let w = u.weekly { print("  weekly: used \(w.pct)% resetsAt \(w.resetsAt ?? -1)") }
+    for cap in u.modelCaps { print("  modelCap[\(cap.label)] \(cap.model): used \(cap.pct)%") }
+  }
+  if snap.claudeAll.isEmpty { print("claude: nil") }
   if let b = snap.block {
     print(String(format: "ccusage.block: cost $%.2f tokens %@ elapsed %.0f%%", b.cost, fmtTok(b.tokens), b.elapsedPct))
   } else { print("ccusage.block: nil") }
   if let m = snap.models {
     print("ccusage.models:", m.models.map { "\(shortModel($0.name)) $\(String(format: "%.1f", $0.cost))" }.joined(separator: ", "))
   }
-  if let cx = snap.codex {
-    print("codex.live:", cx.live, "plan:", cx.plan ?? "-")
-    if let p = windowState(cx.primary, now: snap.now) { print("codex.5h: used \(p.pct)% resetsIn \(p.resetsIn ?? -1)s") }
-    if let s = windowState(cx.secondary, now: snap.now) { print("codex.weekly: used \(s.pct)% resetsIn \(s.resetsIn ?? -1)s") }
-    if let cr = cx.credits { print("codex.credits: has \(cr.hasCredits) unlimited \(cr.unlimited) balance \(cr.balance ?? 0)") }
-  } else { print("codex: nil") }
+  print("codex.accounts:", snap.codexAll.count, "bar:", snap.codex?.account.home ?? "-")
+  for cx in snap.codexes {
+    print("codex[\(cx.account.home)] default:\(cx.account.isDefault) label:\(cx.account.label ?? "-")",
+          "live:\(cx.live) plan:\(cx.plan ?? "-")")
+    if let p = windowState(cx.primary, now: snap.now) { print("  5h: used \(p.pct)% resetsIn \(p.resetsIn ?? -1)s") }
+    if let s = windowState(cx.secondary, now: snap.now) { print("  weekly: used \(s.pct)% resetsIn \(s.resetsIn ?? -1)s") }
+    if let cr = cx.credits { print("  credits: has \(cr.hasCredits) unlimited \(cr.unlimited) balance \(cr.balance ?? 0)") }
+  }
+  if snap.codexAll.isEmpty { print("codex: nil") }
   print("battItems:", battItems(snap).map { "\($0.label)=\($0.remain.map { String(Int($0.rounded())) } ?? "nil")" }.joined(separator: " "))
   print("swiftBarDuplicate:", swiftBarDuplicate())
   exit(0)

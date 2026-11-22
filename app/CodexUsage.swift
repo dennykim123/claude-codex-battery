@@ -1,5 +1,6 @@
 // Codex rate limit — queries the ChatGPT usage endpoint directly (ported from widget 2)
 // Prefers live data (account-level, same across all devices) → falls back to local session logs → last live cache.
+// One reading per login: ~/.codex plus any other CODEX_HOME found (Accounts.swift).
 import Foundation
 
 struct CodexWindow {
@@ -14,6 +15,7 @@ struct CodexCredits {
 }
 
 struct CodexUsage {
+  let account: CodexAccount
   let measuredAt: Int
   let live: Bool
   let limitId: String?
@@ -27,24 +29,6 @@ struct WindowState {
   let pct: Double // usage rate (0 once past the reset)
   let resetsIn: Int?
   let stale: Bool
-}
-
-private let CODEX_AUTH = "\(HOME)/.codex/auth.json"
-private let CODEX_SESSIONS = "\(HOME)/.codex/sessions"
-private let CODEX_CACHE = "\(STATE_DIR)/.codex-usage.json"
-
-private func readCodexToken() -> (token: String, account: String)? {
-  if liveDisabled() { return nil }
-#if MAS_BUILD
-  guard let data = readCodexFile("auth.json"),
-        let d = jd(try? JSONSerialization.jsonObject(with: data)),
-        let t = jstr(jd(d["tokens"])?["access_token"]) else { return nil }
-  return (t, jstr(jd(d["tokens"])?["account_id"]) ?? "")
-#else
-  guard let d = jd(readJSONFile(CODEX_AUTH)),
-        let t = jstr(jd(d["tokens"])?["access_token"]) else { return nil }
-  return (t, jstr(jd(d["tokens"])?["account_id"]) ?? "")
-#endif
 }
 
 private func parseWindow(_ a: Any?, resetKey: String) -> CodexWindow? {
@@ -61,25 +45,33 @@ private func parseCredits(_ a: Any?) -> CodexCredits? {
 
 // Live: GET /backend-api/wham/usage → normalizes the response fields (primary_window/limit_window_seconds/reset_at)
 // into the session-log format. primary/secondary are "whichever window is active at the time," so the slot is decided by window length.
-// A failed call (expired token, 429, offline) pauses live calls 5 → 30 min instead of retrying every refresh
-private var codexPausedUntil = 0
-private var codexPause = 0
+// A failed call (expired token, 429, offline) pauses live calls 5 → 30 min instead of
+// retrying every refresh. Kept per login (CODEX_HOME), since limits are per account.
+private var codexPausedUntil: [String: Int] = [:]
+private var codexPause: [String: Int] = [:]
 
-private func fetchCodexLive(now: Int) -> CodexUsage? {
-  if now < codexPausedUntil { return nil }
-  guard let c = readCodexToken() else { return nil }
+private func pauseCodex(_ key: String, now: Int, retryAfter: Int?) {
+  let pause = min(1800, max(300, codexPause[key, default: 0] * 2))
+  codexPause[key] = pause
+  codexPausedUntil[key] = now + max(min(retryAfter ?? 0, 1800), pause)
+}
+
+private func fetchCodexLive(_ acc: CodexAccount, now: Int) -> CodexUsage? {
+  let key = acc.home
+  if now < codexPausedUntil[key, default: 0] { return nil }
+  // Only Codex renews its token; an expired one would just earn a 401
+  guard let token = acc.token, codexTokenExp(acc) == 0 || codexTokenExp(acc) > now + 60 else { return nil }
   let res = httpFetch("https://chatgpt.com/backend-api/wham/usage",
-                      headers: ["Authorization": "Bearer \(c.token)",
-                                "ChatGPT-Account-Id": c.account,
+                      headers: ["Authorization": "Bearer \(token)",
+                                "ChatGPT-Account-Id": acc.accountId ?? "",
                                 "User-Agent": "codex-cli"], timeout: 5)
   guard let raw = res.data,
         let d = jd(try? JSONSerialization.jsonObject(with: raw))
   else {
-    codexPause = min(1800, max(300, codexPause * 2))
-    codexPausedUntil = now + max(min(res.retryAfter ?? 0, 1800), codexPause)
+    pauseCodex(key, now: now, retryAfter: res.retryAfter)
     return nil
   }
-  codexPause = 0
+  codexPause[key] = 0
   let rl = jd(d["rate_limit"])
   var primary: CodexWindow? = nil
   var secondary: CodexWindow? = nil
@@ -91,11 +83,10 @@ private func fetchCodexLive(now: Int) -> CodexUsage? {
   }
   let credits = (primary == nil && secondary == nil) ? parseCredits(d["credits"]) : nil
   if primary == nil, secondary == nil, credits == nil {
-    codexPause = min(1800, max(300, codexPause * 2))
-    codexPausedUntil = now + codexPause
+    pauseCodex(key, now: now, retryAfter: nil)
     return nil
   }
-  let result = CodexUsage(measuredAt: now, live: true, limitId: nil, plan: jstr(d["plan_type"]),
+  let result = CodexUsage(account: acc, measuredAt: now, live: true, limitId: nil, plan: jstr(d["plan_type"]),
                           primary: primary, secondary: secondary, credits: credits)
   saveCache(result)
   return result
@@ -117,11 +108,16 @@ private func saveCache(_ u: CodexUsage) {
     if let b = cr.balance { c["balance"] = b }
     obj["credits"] = c
   } else { obj["credits"] = NSNull() }
-  writeJSONFile(CODEX_CACHE, obj)
+  // Which login wrote it — so a switched login never shows the old account's copy
+  var tag: [String: Any] = ["home": u.account.home]
+  if let id = u.account.accountId { tag["id"] = id }
+  if let l = u.account.label { tag["label"] = l }
+  obj["account"] = tag
+  writeJSONFile(u.account.usageCachePath, obj)
 }
 
 // Fallback 1: scan rate_limits from the freshest session log (.jsonl)
-private func codexFromSessions() -> CodexUsage? {
+private func codexFromSessions(_ acc: CodexAccount) -> CodexUsage? {
 #if MAS_BUILD
   var files: [(path: String, mtime: Int, data: () -> String?)] = codexSessionFiles().map { f in
     (f.path.path, f.mtime, { () -> String? in
@@ -131,11 +127,12 @@ private func codexFromSessions() -> CodexUsage? {
     })
   }
 #else
-  guard FileManager.default.fileExists(atPath: CODEX_SESSIONS) else { return nil }
+  let sessions = "\(acc.home)/sessions"
+  guard FileManager.default.fileExists(atPath: sessions) else { return nil }
   var files: [(path: String, mtime: Int, data: () -> String?)] = []
-  if let en = FileManager.default.enumerator(atPath: CODEX_SESSIONS) {
+  if let en = FileManager.default.enumerator(atPath: sessions) {
     for case let rel as String in en where rel.hasSuffix(".jsonl") {
-      let p = CODEX_SESSIONS + "/" + rel
+      let p = sessions + "/" + rel
       files.append((p, fileMtime(p), { try? String(contentsOfFile: p, encoding: .utf8) }))
     }
   }
@@ -149,7 +146,7 @@ private func codexFromSessions() -> CodexUsage? {
             let obj = jd(try? JSONSerialization.jsonObject(with: Data(line.utf8))) else { continue }
       guard let rl = jd(jd(obj["payload"])?["rate_limits"]) ?? jd(obj["rate_limits"]),
             rl["primary"] != nil || rl["secondary"] != nil || rl["credits"] != nil else { continue }
-      return CodexUsage(measuredAt: f.mtime, live: false,
+      return CodexUsage(account: acc, measuredAt: f.mtime, live: false,
                         limitId: jstr(rl["limit_id"]), plan: jstr(rl["plan_type"]),
                         primary: parseWindow(rl["primary"], resetKey: "resets_at"),
                         secondary: parseWindow(rl["secondary"], resetKey: "resets_at"),
@@ -159,22 +156,26 @@ private func codexFromSessions() -> CodexUsage? {
   return nil
 }
 
-// Fallback 2: last live cache
-private func codexFromCache() -> CodexUsage? {
-  guard let c = jd(readJSONFile(CODEX_CACHE)) else { return nil }
+// Fallback 2: last live cache (skipped when another account wrote it)
+private func codexFromCache(_ acc: CodexAccount) -> CodexUsage? {
+  guard let c = jd(readJSONFile(acc.usageCachePath)) else { return nil }
+  if let tagged = jstr(jd(c["account"])?["id"]), let mine = acc.accountId, tagged != mine { return nil }
   let primary = parseWindow(c["primary"], resetKey: "resets_at")
   let secondary = parseWindow(c["secondary"], resetKey: "resets_at")
   let credits = parseCredits(c["credits"])
   if primary == nil, secondary == nil, credits == nil { return nil }
-  return CodexUsage(measuredAt: Int(jn(c["measuredAt"]) ?? 0), live: false,
+  return CodexUsage(account: acc, measuredAt: Int(jn(c["measuredAt"]) ?? 0), live: false,
                     limitId: jstr(c["limitId"]), plan: jstr(c["plan"]),
                     primary: primary, secondary: secondary, credits: credits)
 }
 
-func getCodex(now: Int) -> CodexUsage? {
-  if let live = fetchCodexLive(now: now) { return live }
-  // Offline: a days-old session log must not outrank a cache written minutes ago
-  return [codexFromSessions(), codexFromCache()].compactMap { $0 }.max { $0.measuredAt < $1.measuredAt }
+// One reading per Codex login (Accounts.swift)
+func getCodexAll(now: Int) -> [CodexUsage] {
+  discoverCodexAccounts(now: now).compactMap { acc in
+    if let live = fetchCodexLive(acc, now: now) { return live }
+    // Offline: a days-old session log must not outrank a cache written minutes ago
+    return [codexFromSessions(acc), codexFromCache(acc)].compactMap { $0 }.max { $0.measuredAt < $1.measuredAt }
+  }
 }
 
 func windowState(_ w: CodexWindow?, now: Int) -> WindowState? {
