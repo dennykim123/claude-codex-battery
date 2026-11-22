@@ -126,6 +126,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       self, selector: #selector(rerender),
       name: NSNotification.Name("AppleInterfaceThemeChangedNotification"), object: nil)
     refresh()
+    // --check-updates: runs Settings → Check for updates right away (for verification/screenshots)
+    if CommandLine.arguments.contains("--check-updates") { checkForUpdates() }
     timer = Timer.scheduledTimer(withTimeInterval: REFRESH_SECONDS, repeats: true) { [weak self] _ in
       self?.refresh()
     }
@@ -375,6 +377,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let svc = SMAppService.mainApp
     if svc.status == .enabled { try? svc.unregister() } else { try? svc.register() }
     rerender() // only the checkmark needs updating — no need to re-collect
+  }
+
+  // Settings → Check for updates: asks GitHub now and says what it found
+  @objc func checkForUpdates() {
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let latest = checkUpdateNow(now: Int(Date().timeIntervalSince1970))
+      DispatchQueue.main.async {
+        guard let self = self else { return }
+        let a = NSAlert()
+        if let v = latest, cmpVer(v, APP_VERSION) > 0 {
+          a.messageText = trf("v%@ is available", v)
+          a.informativeText = trf("You have v%@. Installing takes a few seconds and relaunches the app.", APP_VERSION)
+          a.addButton(withTitle: tr("Install now"))
+          a.addButton(withTitle: tr("Later"))
+        } else if latest != nil {
+          a.messageText = trf("You're up to date (v%@)", APP_VERSION)
+        } else {
+          a.messageText = tr("Couldn't check for updates — check your network")
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        let choice = a.runModal()
+        self.refresh() // the menu picks up the fresh check (update row on top)
+        if let v = latest, cmpVer(v, APP_VERSION) > 0, choice == .alertFirstButtonReturn {
+          let item = NSMenuItem()
+          item.representedObject = v
+          self.selfUpdate(item)
+        }
+      }
+    }
   }
 
   // One-click auto-update — download → verify signature → replace self → relaunch. Falls back to the releases page on failure

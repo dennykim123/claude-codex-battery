@@ -1,4 +1,5 @@
-// Update check — silently checks GitHub VERSION in the background every 24h (same cache as the widget)
+// Update check — silently checks GitHub VERSION in the background every 6h (same cache as the widget);
+// Settings → Check for updates asks right away
 import Foundation
 
 private let UPDATE_CACHE = "\(STATE_DIR)/.update-check.json"
@@ -25,6 +26,14 @@ func fetchLatestVersion() -> String? {
 }
 
 private var updateRetryAt = 0
+private let UPDATE_CHECK_EVERY = 6 * 3600 // a release reaches running apps within hours, not a day
+
+// Asks GitHub now and refreshes the shared cache; nil when the check itself failed
+func checkUpdateNow(now: Int) -> String? {
+  guard let v = fetchLatestVersion() else { return nil }
+  writeJSONFile(UPDATE_CACHE, ["checkedAt": now, "latest": v])
+  return v
+}
 
 func getUpdateInfo(now: Int) -> (latest: String?, hasUpdate: Bool) {
 #if MAS_BUILD
@@ -32,7 +41,7 @@ func getUpdateInfo(now: Int) -> (latest: String?, hasUpdate: Bool) {
 #endif
   let cache = jd(readJSONFile(UPDATE_CACHE))
   let age = cache.flatMap { jn($0["checkedAt"]) }.map { now - Int($0) } ?? Int.max
-  if age > 24 * 3600, now >= updateRetryAt {
+  if age > UPDATE_CHECK_EVERY, now >= updateRetryAt {
     updateRetryAt = now + 3600
     DispatchQueue.global(qos: .background).async {
       if let d = httpGet(VERSION_URL, headers: [:], timeout: 8),

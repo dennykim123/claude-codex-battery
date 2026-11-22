@@ -273,6 +273,36 @@ private let TR: [String: [String: String]] = [
     "ko": "자동 시작", "ja": "起動する", "zh-Hans": "自动启动", "zh-Hant": "自動啟動",
     "es": "Iniciar al abrir sesión",
   ],
+  "Check for updates": [
+    "ko": "업데이트 확인", "ja": "アップデートを確認", "zh-Hans": "检查更新", "zh-Hant": "檢查更新",
+    "es": "Buscar actualizaciones",
+  ],
+  "v%@ is available": [
+    "ko": "v%@ 업데이트가 있습니다", "ja": "v%@ が利用可能です", "zh-Hans": "v%@ 可用",
+    "zh-Hant": "v%@ 可用", "es": "v%@ está disponible",
+  ],
+  "You have v%@. Installing takes a few seconds and relaunches the app.": [
+    "ko": "지금은 v%@입니다. 설치는 몇 초면 끝나고 앱이 다시 열립니다.",
+    "ja": "現在は v%@ です。インストールは数秒で終わり、アプリが再起動します。",
+    "zh-Hans": "当前为 v%@。安装只需几秒，完成后应用会重新启动。",
+    "zh-Hant": "目前為 v%@。安裝只需幾秒，完成後 App 會重新啟動。",
+    "es": "Tienes la v%@. La instalación tarda unos segundos y reinicia la app.",
+  ],
+  "Install now": [
+    "ko": "지금 설치", "ja": "今すぐインストール", "zh-Hans": "立即安装", "zh-Hant": "立即安裝",
+    "es": "Instalar ahora",
+  ],
+  "You're up to date (v%@)": [
+    "ko": "최신 버전입니다 (v%@)", "ja": "最新バージョンです (v%@)", "zh-Hans": "已是最新版本 (v%@)",
+    "zh-Hant": "已是最新版本 (v%@)", "es": "Tienes la última versión (v%@)",
+  ],
+  "Couldn't check for updates — check your network": [
+    "ko": "업데이트를 확인하지 못했습니다 — 네트워크를 확인하세요",
+    "ja": "アップデートを確認できませんでした — ネットワークを確認してください",
+    "zh-Hans": "无法检查更新 — 请检查网络",
+    "zh-Hant": "無法檢查更新 — 請檢查網路",
+    "es": "No se pudo buscar actualizaciones — revisa tu red",
+  ],
   "Later": ["ko": "나중에", "ja": "後で", "zh-Hans": "以后再说", "zh-Hant": "以後再說", "es": "Más tarde"],
   "downloading…": [
     "ko": "다운로드 중…", "ja": "ダウンロード中…", "zh-Hans": "下载中…", "zh-Hant": "下載中…",

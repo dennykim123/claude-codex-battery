@@ -155,6 +155,13 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
   let hasCodex = !snap.codexAll.isEmpty
   let labels = gaugeLabels()
 
+  // An available update leads the menu, so it is seen on the next click rather than missed at the bottom
+  if snap.update.hasUpdate, let latest = snap.update.latest {
+    row(menu, "⬆︎ " + trf("Install v%@ update — one click (current v%@)", latest, APP_VERSION),
+        color: "#28963f", action: #selector(AppDelegate.selfUpdate(_:)), target: target, repr: latest)
+    menu.addItem(.separator())
+  }
+
   if swiftBarDup {
     row(menu, tr("⚠️ SwiftBar widget is also running — batteries appear twice"),
         size: 12, color: "#FF9F0A")
@@ -216,10 +223,6 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
   }
 
   // ── footer ──
-  if snap.update.hasUpdate, let latest = snap.update.latest {
-    row(menu, trf("Install v%@ update — one click (current v%@)", latest, APP_VERSION),
-        color: "#28963f", action: #selector(AppDelegate.selfUpdate(_:)), target: target, repr: latest)
-  }
   row(menu, tr("Refresh"), action: #selector(AppDelegate.refresh), target: target, key: "r")
 
   // Settings submenu — size · language · auto-start · shortcuts · version
@@ -268,6 +271,9 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
   if snap.block != nil {
     row(settings, tr("Open ccusage dashboard"), action: #selector(AppDelegate.openDashboard), target: target)
   }
+#if !MAS_BUILD
+  row(settings, tr("Check for updates"), action: #selector(AppDelegate.checkForUpdates), target: target)
+#endif
   row(settings, tr("Open GitHub page"),
       action: #selector(AppDelegate.openLink(_:)), target: target, repr: REPO_URL)
   settings.addItem(.separator())
