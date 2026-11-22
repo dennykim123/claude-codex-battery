@@ -127,7 +127,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       name: NSNotification.Name("AppleInterfaceThemeChangedNotification"), object: nil)
     refresh()
     // --check-updates: runs Settings → Check for updates right away (for verification/screenshots)
+#if !MAS_BUILD
     if CommandLine.arguments.contains("--check-updates") { checkForUpdates() }
+#endif
     timer = Timer.scheduledTimer(withTimeInterval: REFRESH_SECONDS, repeats: true) { [weak self] _ in
       self?.refresh()
     }
