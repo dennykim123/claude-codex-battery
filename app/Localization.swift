@@ -94,6 +94,65 @@ private let TR: [String: [String: String]] = [
   "account %d": [
     "ko": "계정 %d", "ja": "アカウント %d", "zh-Hans": "账户 %d", "zh-Hant": "帳號 %d", "es": "cuenta %d",
   ],
+  "Accounts": [
+    "ko": "계정", "ja": "アカウント", "zh-Hans": "账户", "zh-Hant": "帳號", "es": "Cuentas",
+  ],
+  "Add Claude account…": [
+    "ko": "Claude 계정 추가…", "ja": "Claude アカウントを追加…", "zh-Hans": "添加 Claude 账户…",
+    "zh-Hant": "新增 Claude 帳號…", "es": "Añadir cuenta de Claude…",
+  ],
+  "Add Codex account…": [
+    "ko": "Codex 계정 추가…", "ja": "Codex アカウントを追加…", "zh-Hans": "添加 Codex 账户…",
+    "zh-Hant": "新增 Codex 帳號…", "es": "Añadir cuenta de Codex…",
+  ],
+  "'%@' command not found. Install it first, then try again.": [
+    "ko": "'%@' 명령을 찾지 못했습니다. 먼저 설치한 뒤 다시 시도하세요.",
+    "ja": "'%@' コマンドが見つかりません。先にインストールしてから再度お試しください。",
+    "zh-Hans": "找不到 '%@' 命令。请先安装，然后重试。",
+    "zh-Hant": "找不到 '%@' 指令。請先安裝，然後再試一次。",
+    "es": "No se encontró el comando '%@'. Instálalo primero y vuelve a intentarlo.",
+  ],
+  "New Claude login · folder %@": [
+    "ko": "새 Claude 로그인 · 폴더 %@", "ja": "新しい Claude ログイン · フォルダ %@",
+    "zh-Hans": "新的 Claude 登录 · 文件夹 %@", "zh-Hant": "新的 Claude 登入 · 資料夾 %@",
+    "es": "Nuevo inicio de sesión de Claude · carpeta %@",
+  ],
+  "New Codex login · folder %@": [
+    "ko": "새 Codex 로그인 · 폴더 %@", "ja": "新しい Codex ログイン · フォルダ %@",
+    "zh-Hans": "新的 Codex 登录 · 文件夹 %@", "zh-Hant": "新的 Codex 登入 · 資料夾 %@",
+    "es": "Nuevo inicio de sesión de Codex · carpeta %@",
+  ],
+  "When Claude Code opens, sign in with the other account (type /login if it doesn't ask).": [
+    "ko": "Claude Code가 열리면 다른 계정으로 로그인하세요. 로그인을 묻지 않으면 /login 을 입력하세요.",
+    "ja": "Claude Code が開いたら別のアカウントでログインしてください（聞かれない場合は /login と入力）。",
+    "zh-Hans": "Claude Code 打开后，用另一个账户登录（如果没有提示，请输入 /login）。",
+    "zh-Hant": "Claude Code 開啟後，用另一個帳號登入（如果沒有提示，請輸入 /login）。",
+    "es": "Cuando se abra Claude Code, inicia sesión con la otra cuenta (escribe /login si no lo pide).",
+  ],
+  "Sign in with the other account in the browser that opens.": [
+    "ko": "열리는 브라우저에서 다른 계정으로 로그인하세요.",
+    "ja": "開いたブラウザで別のアカウントにログインしてください。",
+    "zh-Hans": "在打开的浏览器中用另一个账户登录。",
+    "zh-Hant": "在開啟的瀏覽器中用另一個帳號登入。",
+    "es": "Inicia sesión con la otra cuenta en el navegador que se abre.",
+  ],
+  "To use this account later: %@": [
+    "ko": "나중에 이 계정으로 쓰려면: %@", "ja": "後でこのアカウントを使うには: %@",
+    "zh-Hans": "以后使用此账户：%@", "zh-Hant": "以後使用此帳號：%@",
+    "es": "Para usar esta cuenta más tarde: %@",
+  ],
+  "The menu bar picks up the new account within 2 minutes.": [
+    "ko": "메뉴 막대는 2분 안에 새 계정을 찾습니다.",
+    "ja": "メニューバーは2分以内に新しいアカウントを認識します。",
+    "zh-Hans": "菜单栏会在 2 分钟内识别新账户。",
+    "zh-Hant": "選單列會在 2 分鐘內識別新帳號。",
+    "es": "La barra de menús detecta la nueva cuenta en menos de 2 minutos.",
+  ],
+  "Done. You can close this window.": [
+    "ko": "완료. 이 창은 닫아도 됩니다.", "ja": "完了しました。このウィンドウは閉じて構いません。",
+    "zh-Hans": "完成。可以关闭此窗口。", "zh-Hant": "完成。可以關閉此視窗。",
+    "es": "Listo. Puedes cerrar esta ventana.",
+  ],
   "cached %@ ago — usage API busy, retrying soon": [
     "ko": "%@ 전 캐시 — 사용량 API 제한, 잠시 후 재시도",
     "ja": "%@前のキャッシュ — 使用量APIが制限中、まもなく再試行",

@@ -164,6 +164,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     rerender() // the snapshot already holds every login; only the order changes
   }
 
+  // Settings → Accounts → Add … account: Terminal runs the CLI's own login in a fresh folder.
+  // Discovery runs on every refresh, so a few quick refreshes pick the new login up sooner.
+  @objc func addAccount(_ sender: NSMenuItem) {
+    guard let raw = sender.representedObject as? String, let kind = AccountKind(rawValue: raw) else { return }
+    guard openAddAccountTerminal(kind) else { NSSound.beep(); return }
+    for delay in [45.0, 90.0, 180.0, 300.0] {
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.refresh() }
+    }
+  }
+
   // Cat style choice from Settings → Cat
   @objc func setCatStyle(_ sender: NSMenuItem) {
     guard let raw = sender.representedObject as? String else { return }
@@ -487,6 +497,17 @@ if CommandLine.arguments.contains("--self-update") {
   } else {
     print("already latest (v\(APP_VERSION), remote v\(latest))")
   }
+  exit(0)
+}
+
+// ── --print-add-account claude|codex: prints the Terminal script Add … account would run (no UI) ──
+if let i = CommandLine.arguments.firstIndex(of: "--print-add-account") {
+  let args = CommandLine.arguments
+  guard i + 1 < args.count, let kind = AccountKind(rawValue: args[i + 1]) else {
+    FileHandle.standardError.write("usage: --print-add-account claude|codex\n".data(using: .utf8)!)
+    exit(2)
+  }
+  print(addAccountScript(kind, dir: nextFreeLoginDir(kind)), terminator: "")
   exit(0)
 }
 

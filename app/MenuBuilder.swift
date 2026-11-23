@@ -126,25 +126,32 @@ private func blockRows(_ menu: NSMenu, _ snap: Snapshot) {
   }
 }
 
-// Settings → Menu bar account: which login the batteries follow (shown with 2+ logins)
+// Settings → Accounts: which login the batteries follow, plus a way to add another one.
+// Always shown (Developer ID build), so a single-login user can still find "add account".
+// The MAS build reads only the default login, so it keeps the 2+ rule and has no add items.
 private func accountMenu(_ snap: Snapshot, target: AppDelegate) -> NSMenu? {
+#if MAS_BUILD
   guard snap.claudeAll.count > 1 || snap.codexAll.count > 1 else { return nil }
+#endif
   let m = NSMenu()
-  if snap.claudeAll.count > 1 {
-    let bar = snap.usage?.account.service
-    for u in snap.claudeAll {
-      row(m, "Claude · " + claudeName(snap, u), action: #selector(AppDelegate.setBarAccount(_:)),
-          target: target, repr: "claude\t" + u.account.service, state: u.account.service == bar ? .on : .off)
-    }
+  if !snap.claudeAll.isEmpty || !snap.codexAll.isEmpty {
+    row(m, tr("Menu bar account"), size: 11, color: GRAY)
   }
-  if snap.claudeAll.count > 1, snap.codexAll.count > 1 { m.addItem(.separator()) }
-  if snap.codexAll.count > 1 {
-    let bar = snap.codex?.account.home
-    for cx in snap.codexAll {
-      row(m, "Codex · " + codexName(snap, cx), action: #selector(AppDelegate.setBarAccount(_:)),
-          target: target, repr: "codex\t" + cx.account.home, state: cx.account.home == bar ? .on : .off)
-    }
+  let bar = snap.usage?.account.service
+  for u in snap.claudeAll {
+    row(m, "Claude · " + claudeName(snap, u), action: #selector(AppDelegate.setBarAccount(_:)),
+        target: target, repr: "claude\t" + u.account.service, state: u.account.service == bar ? .on : .off)
   }
+  let cbar = snap.codex?.account.home
+  for cx in snap.codexAll {
+    row(m, "Codex · " + codexName(snap, cx), action: #selector(AppDelegate.setBarAccount(_:)),
+        target: target, repr: "codex\t" + cx.account.home, state: cx.account.home == cbar ? .on : .off)
+  }
+#if !MAS_BUILD
+  if !m.items.isEmpty { m.addItem(.separator()) }
+  row(m, tr("Add Claude account…"), action: #selector(AppDelegate.addAccount(_:)), target: target, repr: "claude")
+  row(m, tr("Add Codex account…"), action: #selector(AppDelegate.addAccount(_:)), target: target, repr: "codex")
+#endif
   return m
 }
 
@@ -234,7 +241,7 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
   row(sizeMenu, tr("Small"), action: #selector(AppDelegate.setSizeSmall), target: target,
       state: size == "small" ? .on : .off)
   row(settings, tr("Battery size")).submenu = sizeMenu
-  if let acct = accountMenu(snap, target: target) { row(settings, tr("Menu bar account")).submenu = acct }
+  if let acct = accountMenu(snap, target: target) { row(settings, tr("Accounts")).submenu = acct }
 
   let catMenu = NSMenu()
   let curCat = currentCatStyle()
